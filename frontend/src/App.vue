@@ -13,7 +13,7 @@ const visibleNav=computed(()=>isGuest.value?nav.value.filter(n=>!['/settings','/
 const unread=computed(()=>state.alerts.filter(a=>!a.read).length)
 const failed=computed(()=>state.jobs.find((j,index)=>j.status==='failed'&&j.id!==dismissed.value&&!state.jobs.slice(0,index).some(n=>n.kind===j.kind&&['period','decision_role','url'].every(k=>n.input?.[k]===j.input?.[k]))))
 let poll:any,counter=0
-watch(()=>route.path,path=>{if(path==='/alfa-business')setBankMode(true);else if(path==='/')setBankMode(false)},{immediate:true})
+const stopBankMode=router.afterEach(to=>{if(to.path==='/alfa-business')setBankMode(true);else if(to.path==='/')setBankMode(false)})
 function guard(){if(!state.ready||publicPaths.includes(route.path))return;if(!state.user)router.replace('/login');else if(!state.user.verified&&!isGuest.value)router.replace('/check-email');else if(isGuest.value&&['/onboarding','/company','/settings','/assistant'].includes(route.path))router.replace('/overview');else if(!state.workspace?.onboarded&&route.path!='/onboarding')router.replace('/onboarding')}
 watch(()=>[route.path,state.ready,state.user?.id,state.workspace?.id],()=>{guard();state.mobileNav=false})
 async function changeWorkspace(e:Event){const id=(e.target as HTMLSelectElement).value;if(id==='new'){router.push('/onboarding?new=1');return}await switchWorkspace(id);router.push(state.workspace.onboarded?'/overview':'/onboarding')}
@@ -21,7 +21,7 @@ async function changeRole(e:Event){try{state.workspace=await api(wp('/decision-r
 async function logout(){await api('/auth/logout',{method:'POST'});state.user=null;state.workspace=null;state.events=[];router.push('/')}
 async function tick(){if(!state.workspace)return;counter++;try{if(activeJob.value){const previous=state.jobs;const next=await api(wp('/jobs'));state.jobs=next;const completed=next.some((j:any)=>j.status==='completed'&&previous.some(p=>p.id===j.id&&p.status!=='completed'));if(completed){await loadWorkspaces(state.workspace.id);await loadData()}}else if(counter%10===0&&state.workspace.onboarded){await loadData()}}catch{}}
 onMounted(async()=>{await bootstrap();guard();poll=setInterval(tick,3000)})
-onBeforeUnmount(()=>clearInterval(poll))
+onBeforeUnmount(()=>{clearInterval(poll);stopBankMode()})
 </script>
 <template>
 <div v-if="!state.ready" class="app-loading"><div class="brand"><span class="brand-symbol"><Icon name="AudioLines" :size="23"/></span>SignalDesk</div><div class="loading-line"></div></div>
