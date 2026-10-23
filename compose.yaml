@@ -11,8 +11,6 @@ services:
       RELEASE_ID: ${RELEASE_ID:-local}
     volumes:
       - signaldesk_data:/data
-    ports:
-      - "127.0.0.1:8310:8000"
     networks:
       - caddy_net
     logging:

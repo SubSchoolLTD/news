@@ -1,24 +1,28 @@
 name: Deploy analytics servers
 on:
   workflow_dispatch:
-  push:
+  workflow_run:
+    workflows: [Verify SignalDesk]
+    types: [completed]
     branches: [main]
-    paths-ignore: ['docs/**', '**/*.md']
 concurrency:
   group: signaldesk-production
   cancel-in-progress: false
 jobs:
   deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository)
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
       - name: Deploy isolated product
         env:
-          RELEASE_ID: ${{ github.sha }}
+          RELEASE_ID: ${{ github.event.workflow_run.head_sha || github.sha }}
           APP_SECRET: ${{ secrets.APP_SECRET }}
           ALFA_API_KEY: ${{ secrets.ALFA_API_KEY }}
           SENDPULSE_ID: ${{ secrets.SENDPULSE_ID }}
