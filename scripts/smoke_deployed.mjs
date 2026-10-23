@@ -58,8 +58,17 @@ try {
     assert.equal((await page.request.post(base+'/api/workspaces/'+tour[0].id+'/analyze',{headers})).status(),403)
     const stillOwner=await page.request.get(base+'/api/auth/me').then(r=>r.json());assert.equal(stillOwner.id,owner.id)
     const guest=(await context.cookies()).find(c=>c.name==='sd_guest');assert.ok(guest.secure&&guest.httpOnly)
+    await page.goto(base+'/alfa-business')
+    await page.getByLabel(ru?'Выбрать компанию':'Select company',{exact:true}).waitFor()
+    await page.getByRole('button',{name:ru?'Открыть бизнес-аналитику':'Open business intelligence',exact:true}).click()
+    await page.getByRole('heading',{name:ru?'Сигналы без шума.':'Signals, not noise.',exact:true}).waitFor()
+    await page.locator('.bank-module-heading').waitFor()
+    await page.getByRole('link',{name:ru?'Сводки':'Executive briefs',exact:true}).click()
+    await page.locator('.bank-module-heading').waitFor()
+    assert.ok(await page.getByText(ru?'Аналитика подготовлена с помощью ИИ. Выводы модели не являются официальной позицией банка. Не является индивидуальной инвестиционной рекомендацией.':'AI-generated decision support. Model interpretations are not the bank’s official position. Not an individual investment recommendation.',{exact:true}).count())
+    assert.equal((await page.request.post(base+'/api/workspaces/'+tour[0].id+'/events/any/visibility',{headers,data:{hidden:true}})).status(),403)
     await page.screenshot({path:new URL(host+'-guest.png',output).pathname,fullPage:true})
-    pass(host+': jury password login, same three real workspaces, read-only guest and preserved account session')
+    pass(host+': jury password login, same three real workspaces, read-only guest, preserved account session and embedded banking journey')
     await context.close()
   }
 
