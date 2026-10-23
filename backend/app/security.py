@@ -84,6 +84,16 @@ def safe_url(value: str, resolve=True):
         host = parsed.hostname.lower().rstrip(".")
         if host in {"localhost", "metadata.google.internal"} or host.endswith((".local", ".internal", ".localhost")):
             raise ValueError()
+        literal = None
+        try:
+            literal = ipaddress.ip_address(host)
+        except ValueError:
+            try:
+                literal = ipaddress.ip_address(socket.inet_aton(host))
+            except OSError:
+                pass
+        if literal and not literal.is_global:
+            raise ValueError()
         if resolve:
             addresses = {x[4][0] for x in socket.getaddrinfo(host, parsed.port or 443, type=socket.SOCK_STREAM)}
             if not addresses or any(not ipaddress.ip_address(ip).is_global for ip in addresses):

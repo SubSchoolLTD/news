@@ -14,7 +14,7 @@ export const fmt = (date:string, options:Intl.DateTimeFormatOptions={month:'shor
 export const roles = computed(()=>[{id:'ceo',label:t('Chief executive','Генеральный директор')},{id:'cfo',label:t('Finance director','Финансовый директор')},{id:'owner',label:t('Business owner','Владелец бизнеса')},{id:'treasury',label:t('Treasury','Казначейство')},{id:'accountant',label:t('Chief accountant','Главный бухгалтер')},{id:'strategy',label:t('Strategy & operations','Стратегия и операции')}])
 export const writeAccess = computed(()=>['owner','admin','analyst'].includes(state.workspace?.role))
 export const adminAccess = computed(()=>['owner','admin'].includes(state.workspace?.role))
-export const activeJob = computed(()=>state.jobs.find(j=>['queued','running'].includes(j.status)))
+export const activeJob = computed(()=>state.jobs.find(j=>j.status==='running')||state.jobs.find(j=>j.status==='queued'))
 
 export function notify(message:string,error=false){state.toast=message;state.toastError=error;setTimeout(()=>{if(state.toast===message)state.toast=''},6500)}
 export async function api(path:string,options:any={}){

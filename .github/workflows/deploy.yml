@@ -1,0 +1,38 @@
+name: Deploy analytics servers
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths-ignore: ['docs/**', '**/*.md']
+concurrency:
+  group: signaldesk-production
+  cancel-in-progress: false
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.PROD_SSH_KEY }}
+      - name: Deploy isolated product
+        env:
+          RELEASE_ID: ${{ github.sha }}
+          APP_SECRET: ${{ secrets.APP_SECRET }}
+          ALFA_API_KEY: ${{ secrets.ALFA_API_KEY }}
+          SENDPULSE_ID: ${{ secrets.SENDPULSE_ID }}
+          SENDPULSE_SECRET: ${{ secrets.SENDPULSE_SECRET }}
+          ADMIN_EMAIL: ${{ secrets.ADMIN_EMAIL }}
+          ADMIN_PASSWORD: ${{ secrets.ADMIN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -H 137.74.202.47 >> ~/.ssh/known_hosts
+          git archive HEAD | ssh ubuntu@137.74.202.47 'mkdir -p /home/ubuntu/apps/news && tar -xf - -C /home/ubuntu/apps/news'
+          python3 ops/render_env.py | ssh ubuntu@137.74.202.47 'umask 077; cat > /home/ubuntu/apps/news/.env.new && mv /home/ubuntu/apps/news/.env.new /home/ubuntu/apps/news/.env'
+          ssh ubuntu@137.74.202.47 "cd /home/ubuntu/apps/news && RELEASE_ID=${RELEASE_ID} bash ops/deploy-remote.sh"
+      - name: Verify main domain and RU mirror
+        run: |
+          curl --fail --retry 4 --retry-delay 5 https://analytics.subschool.us/api/health
+          curl --fail --retry 4 --retry-delay 5 https://analytics.subschool.ru/api/health

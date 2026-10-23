@@ -5,10 +5,12 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-node_modules/
-dist/
+node_modules
+dist
 playwright-report/
 test-results/
 *.sqlite*
 .local/
 .DS_Store
+
+output/

@@ -15,6 +15,7 @@ from bs4 import BeautifulSoup
 from pypdf import PdfReader
 
 from .security import safe_url
+from .network import public_transport
 
 HEADERS = {"User-Agent": "SignalDeskBot/1.0 (+https://analytics.subschool.us; research and company-requested monitoring)", "Accept": "text/html,application/rss+xml,application/atom+xml,application/pdf;q=0.9,*/*;q=0.8"}
 MAX_BYTES = 5 * 1024 * 1024
@@ -22,7 +23,7 @@ MAX_BYTES = 5 * 1024 * 1024
 
 def fetch(url: str, *, timeout=18):
     """Bounded, redirect-checked, credential-free public fetch."""
-    with httpx.Client(timeout=httpx.Timeout(timeout, connect=7), headers=HEADERS, trust_env=False) as client:
+    with httpx.Client(timeout=httpx.Timeout(timeout, connect=7), headers=HEADERS, transport=public_transport(), trust_env=False) as client:
         for _ in range(5):
             safe_url(url)
             with client.stream("GET", url) as response:

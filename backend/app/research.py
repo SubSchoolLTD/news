@@ -42,7 +42,7 @@ def expand(text):
 
 
 def relevance(text, profile, keywords=None, decision_role="ceo"):
-    focus = " ".join(str(profile.get(k, "")) for k in ["name", "industry", "description", "activities", "regions", "competitors", "counterparties", "priorities", "exposures"])
+    focus = " ".join(str(profile.get(k, "")) for k in ["name", "industry", "description", "activities", "customers", "regions", "competitors", "counterparties", "priorities", "exposures"])
     query = expand(focus + " " + " ".join(keywords or []))
     ts = set(tokens(text))
     common = ts & query
@@ -75,7 +75,7 @@ def retrieve_bank(db, query, limit=4, wid=None):
             for start in range(0, len(text), 1500):
                 fragment = text[start:start + 2100]
                 if len(fragment.strip()) > 70:
-                    chunks.append({"id": row.id, "page": page["page"], "title": p["title"], "url": p["url"], "published_at": p.get("published_at"), "text": fragment, "ocr": p.get("ocr", False), "tokens": tokens(fragment)})
+                    chunks.append({"id": row.id, "page": page["page"], "title": p["title"], "url": p["url"], "published_at": p.get("published_at"), "date_precision": p.get("date_precision", "day"), "text": fragment, "page_text": text[:9000], "ocr": p.get("ocr", False), "user_attributed": p.get("user_attributed", False), "tokens": tokens(fragment)})
     if not chunks:
         return []
     query_terms = expand(query)
@@ -96,6 +96,7 @@ def retrieve_bank(db, query, limit=4, wid=None):
     selected, seen = [], set()
     for c in sorted(ranked, key=lambda c: c["retrieval_score"], reverse=True):
         if c["id"] not in seen:
+            c["text"] = c.pop("page_text")
             selected.append(c)
             seen.add(c["id"])
         if len(selected) >= limit:

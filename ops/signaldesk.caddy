@@ -1,0 +1,25 @@
+(signaldesk_routes) {
+  encode zstd gzip
+  header X-Robots-Tag "noindex, nofollow, noarchive"
+  request_body {
+    max_size 12MB
+  }
+  reverse_proxy signaldesk_app:8000 {
+    trusted_proxies 10.8.0.2
+    transport http {
+      read_timeout 180s
+    }
+  }
+}
+
+analytics.subschool.us {
+  import signaldesk_routes
+}
+
+# RU terminates TLS on the mirror. This inner hop is carried by the existing
+# encrypted server-to-server VPN; a second .ru certificate is unnecessary here.
+http://analytics.subschool.ru {
+  @not_mirror not remote_ip 10.8.0.2
+  respond @not_mirror "Not Found" 404
+  import signaldesk_routes
+}

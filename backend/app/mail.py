@@ -46,6 +46,9 @@ def deliver_pending():
             token = None
         for row in pending:
             p = dict(row.payload)
+            if p["to"].endswith((".invalid", ".test", "@example.com", "@example.org")):
+                row.payload = {**p, "status": "disabled", "error": "Synthetic test recipient; delivery suppressed."}
+                continue
             try:
                 if not token:
                     raise ValueError("SendPulse authentication is unavailable.")

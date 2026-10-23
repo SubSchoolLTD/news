@@ -1,0 +1,33 @@
+services:
+  app:
+    build: .
+    image: signaldesk:${RELEASE_ID:-local}
+    container_name: signaldesk_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/signaldesk.sqlite
+      WORKER_ENABLED: "true"
+      RELEASE_ID: ${RELEASE_ID:-local}
+    volumes:
+      - signaldesk_data:/data
+    ports:
+      - "127.0.0.1:8310:8000"
+    networks:
+      - caddy_net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    mem_limit: 1500m
+    cpus: 2
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+volumes:
+  signaldesk_data:
+networks:
+  caddy_net:
+    external: true

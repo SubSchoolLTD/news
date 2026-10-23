@@ -98,11 +98,26 @@ def seed_demo(db, user, variant="industrial"):
         bank=retrieve_bank(db, title_en+" "+why_en,limit=1)
         bank_view_en="No verified bank opinion is attached to this synthetic event. Explore dated bank research in the evidence library."
         bank_view_ru="К учебному событию не привязана подтверждённая позиция банка. Датированные обзоры доступны в библиотеке источников."
+        verified_bank=[]
+        bank_quote=""
+        if idx==0:
+            original_id='1riR1lhsb6EY1MwGMxdBlS_tI5ed9mIiz' if edu else '1shHG89LtMgHT1_uEebHmQSFZe_zbeq7-'
+            original=db.query(Item).filter_by(workspace_id='global',kind='bank',key=original_id).first()
+            if original:
+                p=original.payload
+                fragment=(p.get('pages_content') or [{'text':p['text']}])[0]['text'][:2100]
+                candidate_quote='Мы полагаем, что динамика потребления сейчас находится Ha пике' if edu else 'ЦБ РФ принял решение оставить ставку неизменной на уровне 14,0%'
+                if candidate_quote in fragment:
+                    bank_quote=candidate_quote
+                    verified_bank=[{'id':original.id,'page':1,'title':p['title'],'url':p['url'],'published_at':p['published_at'],'date_precision':'day','text':fragment,'ocr':True,'user_attributed':False}]
+                    bank_view_en="In its 5 August 2026 case report, Alfa-Bank expected consumer demand growth to cool. This is historical context for consumer-sensitive subscriptions, not a forecast of SubSchool's revenue." if edu else "In its 11 September 2026 case report, Alfa-Bank described a pause in rate cuts and firmer central-bank rhetoric. This is historical context for the financing scenario, not the bank's current view."
+                    bank_view_ru="В обзоре от 5 августа 2026 года Альфа-Банк ожидал замедления роста потребления. Это исторический контекст для подписок, зависящих от бюджетов клиентов, а не прогноз выручки SubSchool." if edu else "В обзоре от 11 сентября 2026 года Альфа-Банк описывал паузу в снижении ставки и ужесточение риторики ЦБ. Это исторический контекст сценария финансирования, а не текущая позиция банка."
         content={"article_id":article.id,"article":pack(article),"relevance":score,"confidence":72,"sentiment":sentiment,"category":category,"time_horizon":"weeks","profile_features":["exposures","priorities"],"evidence_ids":[article.id],"bank_ids":[],"bank_evidence":[],"related_research":bank,"en":{"title":title_en,"fact":fact_en,"why":why_en,"impact":impact_en,"bank_view":bank_view_en,"actions":[action_en],"uncertainties":["Synthetic scenario. Validate company contract terms and financial exposures before acting."]},"ru":{"title":title_ru,"fact":fact_ru,"why":why_ru,"impact":impact_ru,"bank_view":bank_view_ru,"actions":[action_ru],"uncertainties":["Учебный сценарий. До действий уточните условия договоров и финансовые риски компании."]},"published_at":date,"generated_at":now(),"decision_role":"ceo","profile_version":1,"job_id":job.id,"is_demo":True,"status":"demonstration","verification":{"supported":True,"issues":[],"method":"synthetic fixture"}}
+        content.update(bank_ids=[b['id'] for b in verified_bank],bank_evidence=verified_bank,bank_quote=bank_quote)
         saved=record(db,ws.id,"event",content,key=f"demo:{idx}")
         if score>=80:
             record(db,ws.id,"alert",{"event_id":saved.id,"en":title_en,"ru":title_ru,"sentiment":sentiment,"relevance":score,"read_by":[]},key=saved.id)
-    for source in [{"name":"Bank of Russia · Press releases","url":"https://www.cbr.ru/rss/RssPress","type":"rss","kind":"news"},{"name":"Industry monitoring","url":"https://news.google.com/rss/search?q="+("education+technology" if edu else "steel+manufacturing")+"&hl=en-US&gl=US&ceid=US:en","type":"rss","kind":"news"}]:
-        record(db,ws.id,"source",{**source,"enabled":False,"health":"not_checked","respect_robots":True,"limit":12,"note":"Enable to start live collection; demonstration events use synthetic fixtures."})
+    for source in [{"name":"Bank of Russia · Press releases","url":"https://www.cbr.ru/rss/RssPress","type":"rss","kind":"news"},{"name":"EdSurge · Education & technology" if edu else "BBC · Business","url":"https://www.edsurge.com/articles_rss" if edu else "https://feeds.bbci.co.uk/news/business/rss.xml","type":"rss","kind":"news"}]:
+        record(db,ws.id,"source",{**source,"enabled":True,"health":"not_checked","respect_robots":True,"limit":12,"note":"Live collection is available on demand. Automatic runs are disabled for demo workspaces."})
     db.commit()
     return ws

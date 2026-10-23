@@ -82,6 +82,7 @@ def public_user(u):
 
 def public_settings(settings):
     s = dict(settings)
+    s.pop("profile_draft", None)
     c = s.get("model", {})
     if c:
         s["model"] = {k: v for k, v in c.items() if k != "key_encrypted"}
@@ -90,7 +91,7 @@ def public_settings(settings):
 
 
 def ws_public(w, member):
-    return {"id": w.id, "name": w.name, "profile": w.profile, "settings": public_settings(w.settings), "onboarded": w.onboarded, "demo": w.demo, "role": member.role, "decision_role": member.decision_role, "created_at": w.created_at}
+    return {"id": w.id, "name": w.name, "profile": w.profile, "draft_profile": w.settings.get("profile_draft"), "settings": public_settings(w.settings), "onboarded": w.onboarded, "demo": w.demo, "role": member.role, "decision_role": member.decision_role, "created_at": w.created_at}
 
 
 def job_public(j):
@@ -167,7 +168,7 @@ async def model_error(request, exc):
 @app.get("/api/health", tags=["System"])
 def health(db=Depends(get_db)):
     db.execute(__import__("sqlalchemy").text("SELECT 1"))
-    return {"status": "ok", "version": "1.0.0", "time": now()}
+    return {"status": "ok", "version": "1.0.0", "release": os.getenv("RELEASE_ID", "development"), "time": now()}
 
 
 @app.get("/api/config", tags=["System"])
@@ -325,12 +326,23 @@ def workspace_get(wid: str, request: Request, db=Depends(get_db)):
 @app.put("/api/workspaces/{wid}/profile", tags=["Onboarding"])
 def profile_update(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
     user, ws, member = access(request, db, wid, {"owner", "admin", "analyst"})
-    allowed = {"name", "website", "industry", "description", "activities", "regions", "competitors", "counterparties", "scale", "revenue", "market_position", "exposures", "priorities", "keywords", "unknowns", "evidence", "reviewed"}
-    profile = {**ws.profile, **{k: v for k, v in data.items() if k in allowed}}
+    allowed = {"name", "website", "industry", "description", "activities", "customers", "regions", "competitors", "counterparties", "scale", "revenue", "market_position", "exposures", "priorities", "keywords", "unknowns", "evidence", "reviewed"}
+    for field in ["activities", "customers", "regions", "competitors", "counterparties", "exposures", "priorities", "keywords", "unknowns"]:
+        if field in data and (not isinstance(data[field], list) or any(not isinstance(x, str) for x in data[field])):
+            raise HTTPException(422, f"{field} must be a list of text values.")
+    for field in ["name", "website", "industry"]:
+        if field in data and not isinstance(data[field], str):
+            raise HTTPException(422, f"{field} must be text.")
+    profile = {**(ws.settings.get("profile_draft") or ws.profile), **{k: v for k, v in data.items() if k in allowed}}
     if len(json.dumps(profile)) > 35000:
         raise HTTPException(422, "Company profile is too large.")
     if profile.get("website"):
         safe_url(profile["website"])
+    if not data.get("reviewed") and ws.onboarded:
+        ws.settings = {**ws.settings, "profile_draft": {**profile, "reviewed": False, "status": "draft"}}
+        audit(db, user.id, "company.profile_draft_saved", wid)
+        db.commit()
+        return ws_public(ws, member)
     if data.get("reviewed"):
         if not profile.get("name") or not profile.get("industry") or not profile.get("exposures") or not profile.get("website"):
             raise HTTPException(422, "Add a company website, name, industry and at least one business exposure before confirming.")
@@ -338,6 +350,7 @@ def profile_update(wid: str, request: Request, data: dict = Body(...), db=Depend
         profile["status"] = "confirmed"
         profile["reviewed_at"] = now()
         profile["version"] = int(ws.profile.get("version", 0)) + 1
+        ws.settings = {k: v for k, v in ws.settings.items() if k != "profile_draft"}
     ws.profile = profile
     ws.name = str(profile.get("name") or ws.name)[:150]
     if "decision_role" in data:
@@ -362,12 +375,15 @@ def discover(wid: str, data: URLIn, request: Request, db=Depends(get_db)):
 @app.get("/api/workspaces/{wid}/source-suggestions", tags=["Sources"])
 def source_suggestions(wid: str, request: Request, db=Depends(get_db)):
     _, ws, _ = access(request, db, wid)
-    keywords = ws.settings.get("keywords") or ws.profile.get("keywords") or [ws.profile.get("industry", ws.name)]
+    profile = ws.settings.get("profile_draft") or ws.profile
+    keywords = ws.settings.get("keywords") or profile.get("keywords") or [profile.get("industry", ws.name)]
     keyword = " ".join(str(x) for x in keywords[:2])
+    education = bool(re.search(r"educat|edtech|school|образован|обучен|школ", json.dumps(profile, ensure_ascii=False), re.I))
     return [
         {"name": "Bank of Russia · Press releases", "url": "https://www.cbr.ru/rss/RssPress", "type": "rss", "kind": "news", "reason": {"en": "Primary source for monetary policy and regulation", "ru": "Первоисточник денежной политики и регулирования"}},
-        {"name": "Company & industry · Google News", "url": "https://news.google.com/rss/search?q=" + quote(keyword) + "&hl=en-US&gl=US&ceid=US:en", "type": "rss", "kind": "news", "reason": {"en": "Discovery based on your monitoring topics", "ru": "Поиск на основе тем мониторинга"}},
-        {"name": "РИА · Экономика", "url": "https://ria.ru/export/rss2/economy/index.xml", "type": "rss", "kind": "news", "reason": {"en": "Russian macroeconomic and industry coverage", "ru": "Макроэкономика и отрасли России"}},
+        {"name": "EdSurge · Education & technology" if education else "BBC · Business", "url": "https://www.edsurge.com/articles_rss" if education else "https://feeds.bbci.co.uk/news/business/rss.xml", "type": "rss", "kind": "news", "reason": {"en": "Education sector reporting matched to your company" if education else "International business, energy and demand coverage", "ru": "Отраслевые материалы об образовании и технологиях" if education else "Международный бизнес, энергетика и спрос"}},
+        {"name": "РБК · Новости", "url": "https://rssexport.rbc.ru/rbcnews/news/30/full.rss", "type": "rss", "kind": "news", "reason": {"en": "Russian macroeconomic and industry coverage", "ru": "Макроэкономика и отрасли России"}},
+        {"name": "Коммерсантъ · Новости", "url": "https://www.kommersant.ru/RSS/news.xml", "type": "rss", "kind": "news", "reason": {"en": "Business, policy and market reporting", "ru": "Бизнес, регулирование и рынки"}},
     ]
 
 
@@ -490,6 +506,17 @@ def datasets(wid: str, request: Request, db=Depends(get_db)):
     return [{"id": r.id, "kind": r.kind, "filename": r.payload["filename"], "row_count": r.payload["row_count"], "columns": r.payload["columns"], "sample": r.payload["rows"][:20]} for r in db.query(Item).filter(Item.workspace_id == wid, Item.kind.in_(["client_dataset", "payment_dataset", "csv_dataset"])).all()]
 
 
+@app.get("/api/workspaces/{wid}/case-sample/{kind}", tags=["Onboarding"])
+def case_sample(wid: str, kind: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    if kind not in {"clients", "payments"}:
+        raise HTTPException(404, "Sample not found.")
+    path = Path(__file__).resolve().parents[2] / "data" / f"demo_{kind}.csv"
+    if not path.exists():
+        raise HTTPException(404, "Sample not found.")
+    return FileResponse(path, media_type="text/csv", filename=f"case-{kind}.csv")
+
+
 @app.post("/api/workspaces/{wid}/datasets/{did}/select", tags=["Onboarding"])
 def select_client(wid: str, did: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
     user, ws, member = access(request, db, wid, WRITE_ROLES)
@@ -505,7 +532,11 @@ def select_client(wid: str, did: str, request: Request, data: dict = Body(...), 
     linked = []
     for payment in items(db, wid, "payment_dataset"):
         linked += [p for p in payment.payload["rows"] if p.get("PAYER") == company_id or p.get("BENEFICIARY") == company_id]
-    ws.profile = {**ws.profile, "synthetic_company_id": company_id, "industry": selected.get("MAINOKVED_NAME", ws.profile.get("industry", "")), "okved": selected.get("MAINOKVED_CODE"), "revenue": selected.get("REVENUE_COMPANY", "Unknown"), "regions": list(filter(None, [selected.get("REGION"), selected.get("FTS_COUNTRY_NAME")])), "group_id": selected.get("GROUP_ID"), "exposures": list(dict.fromkeys(exposures)), "dataset_features": selected, "payment_connections": linked[:100], "reviewed": False}
+    imported = {**ws.profile, "synthetic_company_id": company_id, "industry": selected.get("MAINOKVED_NAME", ws.profile.get("industry", "")), "okved": selected.get("MAINOKVED_CODE"), "revenue": selected.get("REVENUE_COMPANY", "Unknown"), "regions": list(filter(None, [selected.get("REGION"), selected.get("FTS_COUNTRY_NAME")])), "group_id": selected.get("GROUP_ID"), "exposures": list(dict.fromkeys(exposures)), "dataset_features": selected, "payment_connections": linked[:100], "reviewed": False}
+    if ws.onboarded:
+        ws.settings = {**ws.settings, "profile_draft": imported}
+    else:
+        ws.profile = imported
     audit(db, user.id, "company.dataset_selected", wid, company_id=company_id);db.commit()
     return ws_public(ws, member)
 
@@ -530,9 +561,9 @@ def analyze(wid: str, request: Request, db=Depends(get_db)):
 
 @app.get("/api/workspaces/{wid}/events", tags=["Analysis"])
 def events(wid: str, request: Request, q: str = "", sentiment: str = "", category: str = "", days: int = 30, db=Depends(get_db)):
-    _, _, member = access(request, db, wid)
+    _, ws, member = access(request, db, wid)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, min(365, days)))).isoformat(timespec="seconds").replace("+00:00", "Z")
-    result = [pack(e) for e in items(db, wid, "event") if e.payload.get("decision_role", "ceo") == member.decision_role and (e.payload.get("published_at") or e.created_at) >= cutoff]
+    result = [pack(e) for e in items(db, wid, "event") if e.payload.get("decision_role", "ceo") == member.decision_role and e.payload.get("profile_version", 1) == ws.profile.get("version", 1) and (e.payload.get("published_at") or e.created_at) >= cutoff]
     if sentiment:
         result = [e for e in result if e.get("sentiment") == sentiment]
     if category:
@@ -580,8 +611,8 @@ def saved(wid: str, request: Request, db=Depends(get_db)):
 
 @app.get("/api/workspaces/{wid}/alerts", tags=["Notifications"])
 def alerts(wid: str, request: Request, db=Depends(get_db)):
-    user, _, _ = access(request, db, wid)
-    return [{**pack(r), "read": user.id in r.payload.get("read_by", [])} for r in items(db, wid, "alert")][:100]
+    user, ws, member = access(request, db, wid)
+    return [{**pack(r), "read": user.id in r.payload.get("read_by", [])} for r in items(db, wid, "alert") if r.payload.get("decision_role", "ceo") == member.decision_role and r.payload.get("profile_version", 1) == ws.profile.get("version", 1)][:100]
 
 
 @app.post("/api/workspaces/{wid}/alerts/read", tags=["Notifications"])
@@ -641,9 +672,9 @@ def assistant(wid: str, request: Request, data: dict = Body(...), db=Depends(get
         raise HTTPException(422, "Ask a question about your company's events or business exposures.")
     language = "ru" if data.get("locale") == "ru" else "en"
     all_events = items(db, wid, "event")
-    candidates = [pack(e) for e in all_events if not data.get("event_id") or e.id == data["event_id"]]
+    candidates = [pack(e) for e in all_events if (e.id == data["event_id"] if data.get("event_id") else e.payload.get("decision_role", "ceo") == member.decision_role and e.payload.get("profile_version", 1) == ws.profile.get("version", 1))]
     candidates = sorted(candidates, key=lambda e: relevance(json.dumps(e.get(language, {}), ensure_ascii=False), ws.profile, [question], member.decision_role)[0], reverse=True)[:7]
-    evidence = [{"id": e["id"], "published_at": e.get("published_at"), "analysis": e.get(language), "source": e.get("article", {}), "bank_evidence": e.get("bank_evidence", [])} for e in candidates]
+    evidence = [{"id": e["id"], "published_at": e.get("published_at"), "profile_version": e.get("profile_version", 1), "historical_context": e.get("profile_version", 1) != ws.profile.get("version", 1), "analysis": e.get(language), "source": e.get("article", {}), "bank_evidence": e.get("bank_evidence", [])} for e in candidates]
     bank = retrieve_bank(db, question, limit=2, wid=wid)
     history = [r.payload for r in items(db, wid, "message") if r.payload.get("user_id") == user.id][:4]
     db.commit()
@@ -768,6 +799,8 @@ def model_config(wid: str, request: Request, data: dict = Body(...), db=Depends(
     elif mode == "custom":
         base = str(data.get("base_url", ""))[:2000]
         safe_url(base)
+        if urlsplit(base).scheme != "https":
+            raise HTTPException(422, "Model connections require HTTPS.")
         if urlsplit(base).query:
             raise HTTPException(422, "Use a base URL without query parameters.")
         key = str(data.get("api_key", ""))

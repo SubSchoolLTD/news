@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    env_file: .env
+    environment:
+      DATABASE_URL: sqlite:////data/signaldesk.sqlite
+      PUBLIC_URL: http://localhost:8310
+      ALLOWED_ORIGINS: http://localhost:8310
+      COOKIE_SECURE: "false"
+      APP_ENV: development
+    ports:
+      - "127.0.0.1:8310:8000"
+    volumes:
+      - signaldesk_data:/data
+volumes:
+  signaldesk_data:
