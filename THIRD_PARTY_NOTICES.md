@@ -25,7 +25,7 @@ The visual tokens and product patterns were adapted with the repository owner's 
 
 ## Models and services
 
-The default model route is the hackathon's provided gateway, using only its approved IDs: `google/gemma-4-26b-a4b-it`, `z-ai/glm-5.3-flash`, `qwen/qwen3.6-35b-a3b`, `deepseek/deepseek-v4.1-flash`, `qwen/qwen3-vl-30b-a3b-instruct`, `moonshotai/kimi-k2.6`. The tested default is Qwen. Model services and licenses are provided through the organiser's gateway; weights are not distributed here.
+The default model route is the hackathon's provided gateway, using only its approved IDs: `google/gemma-4-26b-a4b-it`, `z-ai/glm-5.3-flash`, `qwen/qwen3.6-35b-a3b`, `deepseek/deepseek-v4.1-flash`, `qwen/qwen3-vl-30b-a3b-instruct`, `moonshotai/kimi-k2.6`. The default generator is Qwen; independent verification uses the approved Gemma 26B-A4B through the same supplied gateway. Model services and licenses are provided through the organiser's gateway; weights are not distributed here.
 
 SendPulse supplies OAuth and transactional email delivery. The main and mirror servers, DNS and existing VPN are supplied by the project owner. The generic private-model form is a configurable HTTP adapter, not an integration with any additional named model provider.
 
@@ -42,10 +42,11 @@ The owner supplied the case PDF and API instructions. The PDF linked these resou
 
 `data/demo_clients.csv` and `data/demo_payments.csv` are a small subset of the case's anonymised data, retained only to reproduce import and company-feature analysis. Synthetic IDs do not identify a real company or individual. The full downloaded data and original PDFs are not checked into Git.
 
-## Synthetic and simulated boundaries
+## Runtime and test boundaries
 
-- Demonstration company profiles/events are labelled synthetic in the UI and stored in each visitor's isolated demonstration workspace. They are not claims about current real-world events or SubSchool's finances.
-- Any bank excerpt shown in a demonstration remains sourced from the actual dated case corpus; the surrounding event scenario remains synthetic.
-- `/alfa-business` is a simulated internet-bank shell illustrating a persistent service entry. It has no bank account, balance, payment, banking SSO or transaction integration.
+- The public tour reads actual collected publications and approved-model analyses in owner-selected review workspaces. A password-authenticated jury account accesses the same data with working product permissions.
+- Synthetic company/event generators are test fixtures only (`backend/tests/fixtures.py`), excluded from the production image. Earlier release demo records retain their labels in persisted databases; the current tour cannot access those legacy synthetic workspaces.
+- `/alfa-business` illustrates a persistent integration entry using the genuine product summary. It does not claim bank-account, balance, payment, banking SSO or transaction connectivity.
+- Source discovery uses GDELT DOC 2.0 (https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/), DuckDuckGo public HTML search and MediaWiki's public API (https://www.mediawiki.org/wiki/API:Search). Public publisher leads are inspected and verified; no search challenges are bypassed. Publisher robots policies apply. Headlines, dates and original URLs are retained as evidence, not claimed as original reporting by SignalDesk.
 - Email delivery is disabled in development/CI and suppressed for synthetic test addresses. Production uses the real SendPulse integration.
 - There is no simulated result used as a fallback for a failed live analysis. Failed or unsupported analysis is shown as such.

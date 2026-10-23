@@ -11,3 +11,5 @@ output
 test-results
 playwright-report
 .DS_Store
+
+backend/tests

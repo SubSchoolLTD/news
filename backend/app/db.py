@@ -176,7 +176,7 @@ def record(db, wid: str, kind: str, payload: dict, key: str | None = None):
 
 
 def pack(row):
-    return {"id": row.id, "created_at": row.created_at, "updated_at": row.updated_at, **row.payload}
+    return {**row.payload, "id": row.id, "created_at": row.created_at, "updated_at": row.updated_at}
 
 
 def audit(db, actor, action, wid="", **detail):

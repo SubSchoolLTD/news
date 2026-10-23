@@ -29,7 +29,10 @@ def client():
 def register(client, email="owner@example.com"):
     r = client.post("/api/auth/register", json={"name": "Test User", "email": email, "password": "correct-test-password-123"})
     assert r.status_code == 200, r.text
-    return r.json()
+    user=r.json()
+    verify_user(user["id"])
+    user["verified"]=True
+    return user
 
 
 def workspace(client, name="Test Manufacturing"):

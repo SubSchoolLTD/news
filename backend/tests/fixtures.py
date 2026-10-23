@@ -1,8 +1,8 @@
 """Clearly labelled synthetic scenarios, isolated in each visitor's own workspace."""
 from datetime import datetime, timedelta, timezone
 
-from .db import Item, Job, Member, Workspace, now, pack, record
-from .research import retrieve_bank
+from app.db import Item, Job, Member, Workspace, now, pack, record
+from app.research import retrieve_bank
 
 
 def seed_demo(db, user, variant="industrial"):

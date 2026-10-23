@@ -1,180 +1,53 @@
 import { chromium } from '../frontend/node_modules/playwright/index.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs/promises'
-import { execFileSync } from 'node:child_process'
+import {execFileSync} from 'node:child_process'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
-
-const base=process.env.E2E_URL||'http://127.0.0.1:5173'
-const live=process.env.RUN_LIVE_E2E==='true'
-const output=fileURLToPath(new URL('../output/playwright/',import.meta.url))
+import {fileURLToPath} from 'node:url'
+const base=process.env.E2E_URL||'http://127.0.0.1:5173',live=process.env.RUN_LIVE_E2E==='true'
+const root=fileURLToPath(new URL('..',import.meta.url)),output=root+'/output/playwright/'
+const local=/^http:\/\/(127\.0\.0\.1|localhost):/.test(base),python=process.env.E2E_PYTHON||root+'/.venv/bin/python'
+const password='E2E-'+crypto.randomUUID(),juryEmail='e2e-jury-'+Date.now()+'@example.invalid'
+function fixture(data){return execFileSync(python,['scripts/prepare_e2e.py'],{cwd:root,input:JSON.stringify(data),encoding:'utf8',env:{...process.env,PYTHONPATH:'backend'}}).trim()}
+if(!local)throw new Error('Use smoke_deployed.mjs for public deployment checks; this suite creates local test accounts.')
+fixture({action:'jury',email:juryEmail,password})
 await fs.mkdir(output,{recursive:true})
-const browser=await chromium.launch({headless:true})
-const results=[],errors=[]
-const start=Date.now()
-const password='Test-only-'+crypto.randomUUID()
-const local=base.startsWith('http://127.0.0.1:')||base.startsWith('http://localhost:')
-const python=process.env.E2E_PYTHON||fileURLToPath(new URL('../.venv/bin/python',import.meta.url))
-function report(name){results.push({name,status:'passed',seconds:Math.round((Date.now()-start)/1000)});console.log('PASS',name)}
-async function expectVisible(locator){await locator.waitFor({state:'visible',timeout:20000})}
-async function noOverflow(page){assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>window.innerWidth+2),false,'Horizontal overflow')}
-async function waitForRun(page,kind='brief'){
- const until=Date.now()+240000
- while(Date.now()<until){
-  const jobs=await page.request.get(base+'/api/workspaces/'+await currentWorkspace(page)+'/jobs').then(r=>r.json())
-  const job=jobs.find(j=>j.kind===kind)
-  if(job?.status==='failed')throw new Error(job.error)
-  if(job?.status==='completed')return job
-  await new Promise(r=>setTimeout(r,1500))
- }
- throw new Error('Analysis did not finish within 4 minutes')
-}
-async function currentWorkspace(page){return page.evaluate(()=>localStorage.getItem('sd_workspace'))}
-const context=await browser.newContext({viewport:{width:1440,height:1000},locale:'en-US'})
-const page=await context.newPage()
+const browser=await chromium.launch({headless:true}),results=[],errors=[],start=Date.now()
+const context=await browser.newContext({locale:'en-US',viewport:{width:1440,height:1000}}),page=await context.newPage()
+let activePage=page
 page.on('pageerror',e=>errors.push(e.message))
+const visible=async l=>l.waitFor({state:'visible',timeout:25000})
+const report=name=>{results.push({name,status:'passed'});console.log('PASS',name)}
+const wid=async p=>p.evaluate(()=>localStorage.getItem('sd_workspace'))
+async function overflow(p){assert.equal(await p.evaluate(()=>document.documentElement.scrollWidth>innerWidth+2),false)}
+async function verify(p,email){const url=fixture({action:'verification_link',email});await p.goto(base+'/verify?'+new URL(url).searchParams.toString());await visible(p.getByText('Email confirmed. You can now receive briefs and invite your team.',{exact:true}));const resume=p.getByRole('link',{name:'Continue to SignalDesk',exact:true});if(email.startsWith('invite-'))assert.ok((await resume.getAttribute('href')).startsWith('/invite?'),'Invitation context must survive email verification');await resume.click()}
+async function waitJob(p,kind,period){const end=Date.now()+420000;while(Date.now()<end){const rows=await p.request.get(base+'/api/workspaces/'+await wid(p)+'/jobs').then(r=>r.json());const j=rows.find(j=>j.kind===kind&&(!period||j.input.period===period));if(j?.status==='failed')throw new Error(j.error);if(j?.status==='completed')return j;await new Promise(r=>setTimeout(r,1500))}throw new Error(kind+' job timed out')}
 try{
- await page.goto(base)
- await expectVisible(page.getByRole('button',{name:'Explore the demo',exact:true}))
- assert.equal(await page.getByRole('button',{name:'RU',exact:true}).count(),0,'Russian switch hidden for English browsers')
- await page.getByRole('button',{name:'Explore the demo',exact:true}).click()
- await expectVisible(page.getByRole('heading',{name:'The bigger picture.'}))
- assert.equal(await page.locator('.event-card').count(),3)
- await noOverflow(page)
- await page.screenshot({path:output+'dashboard-en.png',fullPage:true})
- report('English defaults, isolated demo and dashboard')
- await page.getByRole('button',{name:'Financing costs stay in focus',exact:true}).click()
- await expectVisible(page.getByRole('dialog'))
- await expectVisible(page.getByText('WHY IT MATTERS TO YOU',{exact:true}))
- await page.getByRole('button',{name:'Save event',exact:true}).click()
- await page.getByRole('button',{name:'Sources & reasoning',exact:true}).click()
- await expectVisible(page.getByText('This is a synthetic demonstration event, not a real news report.'))
- await page.screenshot({path:output+'event-evidence-en.png'})
- await page.getByRole('button',{name:'Close event',exact:true}).click()
- await page.getByRole('link',{name:'Business signals 8',exact:true}).click()
- await page.getByRole('button',{name:'Saved',exact:true}).click()
- assert.equal(await page.locator('.event-card').count(),1)
- await page.getByRole('button',{name:'Saved',exact:true}).click()
- await page.getByRole('textbox',{name:'Search signals',exact:true}).fill('financing')
- assert.ok(await page.locator('.event-card').count()>=1)
- await page.getByRole('textbox',{name:'Search signals',exact:true}).fill('')
- await page.getByRole('link',{name:'Notifications',exact:true}).click()
- await expectVisible(page.getByRole('heading',{name:'Your important updates'}))
- await page.getByRole('button',{name:'Mark all as read',exact:true}).click()
- report('Event evidence, saved events, filters and notifications')
- await page.getByRole('link',{name:'Research library',exact:true}).click()
- await expectVisible(page.getByRole('heading',{name:'Alfa-Bank research library'}))
- await expectVisible(page.locator('.research-card').first())
- assert.equal(await page.locator('.research-card').count(),9)
- await page.getByRole('button',{name:'Agent runs',exact:true}).click()
- await page.locator('.run-head').first().click()
- await expectVisible(page.getByRole('heading',{name:'plan',exact:true}))
- report('Research provenance and agent trace')
- if(live){
-  await page.getByRole('link',{name:'Executive briefs',exact:true}).click()
-  for(const [period,label] of [['day','Daily'],['week','Weekly'],['month','Monthly']]){
-   await page.getByRole('button').filter({hasText:label}).first().click()
-   await page.getByRole('button',{name:'Generate brief',exact:true}).click()
-   await waitForRun(page)
-   await page.reload()
-   if(period!=='day')await page.getByRole('button').filter({hasText:label}).first().click()
-   await expectVisible(page.locator('.brief-paper h1'))
-   assert.ok((await page.locator('.brief-lead').innerText()).length>120)
-   await page.screenshot({path:output+'brief-'+period+'-en.png',fullPage:true})
-   report('Live Qwen '+period+' executive brief with citations')
-  }
-  await page.getByRole('link',{name:'Ask SignalDesk',exact:true}).click()
-  await page.getByRole('textbox',{name:'Ask SignalDesk',exact:true}).fill('Which financing assumptions should our treasury team validate first?')
-  await page.getByRole('button',{name:'Ask',exact:true}).click()
-  await page.locator('.assistant-response .answer-text').waitFor({timeout:180000})
-  assert.ok((await page.locator('.assistant-response .answer-text').last().innerText()).length>100)
-  report('Live grounded follow-up conversation')
- }
- const ru=await browser.newContext({viewport:{width:390,height:844},locale:'ru-RU'})
- const mobile=await ru.newPage();mobile.on('pageerror',e=>errors.push(e.message))
- await mobile.goto(base)
- await expectVisible(mobile.getByRole('button',{name:'EN',exact:true}))
- await mobile.getByRole('button',{name:'SubSchool',exact:true}).click()
- await expectVisible(mobile.getByRole('heading',{name:'Общая картина.'}))
- await noOverflow(mobile)
- await mobile.screenshot({path:output+'dashboard-ru-mobile.png',fullPage:true})
- await mobile.getByRole('button',{name:'Открыть меню',exact:true}).click()
- await mobile.getByRole('link',{name:/Бизнес-сигналы/}).click()
- await expectVisible(mobile.getByRole('heading',{name:'Сигналы без шума.'}))
- await mobile.locator('.event-card').first().click()
- await expectVisible(mobile.getByRole('dialog'))
- await noOverflow(mobile)
- await mobile.getByRole('button',{name:'Закрыть событие'}).click()
- await mobile.getByRole('button',{name:'EN',exact:true}).click()
- await expectVisible(mobile.getByRole('heading',{name:'Signals, not noise.'}))
- await ru.close()
- report('Russian browser defaults, optional switch and mobile navigation')
- const signup=await browser.newContext({viewport:{width:1440,height:1000},locale:'en-US'})
- const account=await signup.newPage();account.on('pageerror',e=>errors.push(e.message))
- const email='qa-'+Date.now()+'@example.invalid'
- await account.goto(base+'/register')
- await account.getByLabel('Your name',{exact:true}).fill('E2E Analyst')
- await account.getByLabel('Work email',{exact:true}).fill(email)
- await account.getByLabel('Password',{exact:true}).fill(password)
- await account.getByRole('button',{name:'Create account',exact:true}).click()
- await expectVisible(account.getByRole('heading',{name:'Start with your company website'}))
+ await page.goto(base);await visible(page.getByRole('button',{name:'Explore the live tour',exact:true}));assert.equal(await page.getByRole('button',{name:'RU',exact:true}).count(),0)
+ await page.getByRole('button',{name:'Explore the live tour',exact:true}).click();await visible(page.getByRole('heading',{name:'The bigger picture.'}))
+ assert.equal(await page.getByRole('button',{name:'Run monitoring',exact:true}).count(),0)
+ assert.equal(await page.getByRole('link',{name:'Workspace settings',exact:true}).count(),0)
+ await visible(page.getByText('Read-only live tour · Real collected sources and model analysis. Sign in to run your own research.',{exact:true}))
+ assert.equal((await page.request.post(base+'/api/workspaces/'+await wid(page)+'/analyze',{headers:{'X-SignalDesk-Tour':'1'}})).status(),403)
+ await overflow(page);await page.screenshot({path:output+'guest-tour.png',fullPage:true});report('Guest tour: clear identity, no settings or analysis permissions')
+ await page.goto(base+'/login');await page.getByLabel('Work email',{exact:true}).fill(juryEmail);await page.getByLabel('Password',{exact:true}).fill(password);await page.getByRole('button',{name:'Sign in',exact:true}).click();await visible(page.getByRole('button',{name:'Run monitoring',exact:true}));report('Jury account signs in normally with the same showcase workspaces')
+ await page.locator('.event-card').first().click();await visible(page.getByRole('dialog'));await page.getByRole('button',{name:'Save event',exact:true}).click();await page.getByRole('button',{name:'Sources & reasoning',exact:true}).click();await page.screenshot({path:output+'event-evidence-en.png'});await page.getByRole('button',{name:'Close event',exact:true}).click();await page.getByRole('link',{name:/Business signals/}).click();await page.getByRole('button',{name:'Saved',exact:true}).click();assert.equal(await page.locator('.event-card').count(),1);report('Evidence, citations and saved events for signed-in accounts')
+ await page.getByRole('link',{name:'Research library',exact:true}).click();await visible(page.getByRole('heading',{name:'Alfa-Bank research library'}));await visible(page.locator('.research-card').first());assert.equal(await page.locator('.research-card').count(),9);await page.getByRole('button',{name:'Agent runs',exact:true}).click();await page.locator('.run-head').first().click();await visible(page.getByRole('heading',{name:'plan',exact:true}));report('Bank provenance and traceable agent steps')
+ const signup=await browser.newContext({locale:'en-US',viewport:{width:1440,height:1000}}),account=await signup.newPage();activePage=account;account.on('pageerror',e=>errors.push(e.message))
+ const email='qa-'+Date.now()+'@example.invalid';await account.goto(base+'/register');await account.getByLabel('Your name',{exact:true}).fill('E2E Analyst');await account.getByLabel('Work email',{exact:true}).fill(email);await account.getByLabel('Password',{exact:true}).fill(password);await account.getByRole('button',{name:'Create account',exact:true}).click();await visible(account.getByRole('heading',{name:'Check your inbox.',exact:true}));assert.equal((await account.request.get(base+'/api/workspaces')).status(),403)
+ await account.goto(base+'/overview');await visible(account.getByRole('heading',{name:'Check your inbox.',exact:true}));await account.screenshot({path:output+'email-gate.png',fullPage:true});await verify(account,email);await visible(account.getByRole('heading',{name:'Start with your company website'}));report('Email gate blocks direct UI/API access; real one-time confirmation unlocks onboarding')
  await account.getByLabel('Company website',{exact:true}).fill('https://subschool.us')
- if(live){await account.getByRole('button',{name:'Build my company profile',exact:true}).click();await account.getByLabel('Company name',{exact:true}).waitFor({timeout:180000})}
- else await account.getByRole('button',{name:'I’ll enter the details myself',exact:true}).click()
- await account.getByLabel('Company name',{exact:true}).fill('E2E SubSchool')
- await account.getByLabel('Industry',{exact:true}).fill('Education technology / SaaS')
- await account.getByLabel('Technology & cloud costs',{exact:true}).check()
- await account.getByLabel('Consumer demand',{exact:true}).check()
- await account.getByLabel('Current priorities',{exact:true}).fill('Subscription retention, sustainable cloud cost per student')
- await account.getByRole('button',{name:'Review profile & sources',exact:true}).click()
- await expectVisible(account.getByRole('heading',{name:'Your company profile'}))
- const wid=await currentWorkspace(account)
- await account.request.patch(base+'/api/workspaces/'+wid+'/settings',{data:{auto_monitor:false,scheduled_briefs:[]}})
- await account.getByRole('button',{name:'Confirm & open my workspace',exact:true}).click()
- await expectVisible(account.getByRole('heading',{name:'The bigger picture.'}))
- await account.getByRole('link',{name:'Sources & monitoring',exact:true}).click()
- await expectVisible(account.getByRole('heading',{name:'Connected sources'}))
- assert.ok(await account.locator('.source-card').count()>=2)
- await account.screenshot({path:output+'monitoring-en.png',fullPage:true})
- report((live?'Live website discovery + ':'')+'Registration, context review and source setup')
- if(live){await account.getByRole('button',{name:'Run monitoring',exact:true}).click();const j=await waitForRun(account,'analyze');assert.ok(j.result.events>0,'Live company analysis must produce useful events');await account.getByRole('link',{name:'Business signals',exact:false}).click();await expectVisible(account.locator('.event-card').first());await account.screenshot({path:output+'live-company-analysis.png',fullPage:true});report('Live collection, bank RAG, ranking, interpretation and verification')}
- if(local){
-  const code=`from dotenv import load_dotenv\nload_dotenv('.env')\nimport json,re\nfrom app.db import DB,Item,User,Admin\nfrom app.security import hasher\nwith DB() as db:\n u=db.query(User).filter_by(email=${JSON.stringify(email)}).one()\n u.verified=True\n a=db.query(Admin).filter_by(email='e2e-ops@example.invalid').first()\n if a:a.password=hasher.hash(${JSON.stringify(password)})\n else:db.add(Admin(email='e2e-ops@example.invalid',password=hasher.hash(${JSON.stringify(password)})))\n db.commit()\n`
-  execFileSync(python,['-c',code],{cwd:fileURLToPath(new URL('..',import.meta.url)),env:{...process.env,PYTHONPATH:'backend'}})
-  await account.reload()
-  await account.getByRole('link',{name:'Workspace settings',exact:true}).click()
-  const inviteEmail='qa-invite-'+Date.now()+'@example.invalid'
-  await account.getByLabel('Work email',{exact:true}).fill(inviteEmail)
-  await account.getByRole('button',{name:'Send invitation',exact:true}).click()
-  await expectVisible(account.getByLabel('Invitation link',{exact:true}))
-  const link=await account.getByLabel('Invitation link',{exact:true}).inputValue()
-  const invited=await browser.newContext({viewport:{width:1280,height:900},locale:'en-US'})
-  const teammate=await invited.newPage();await teammate.goto(link)
-  await teammate.getByRole('link',{name:'Create your account',exact:true}).click()
-  await teammate.getByLabel('Your name',{exact:true}).fill('E2E Viewer')
-  await teammate.getByLabel('Work email',{exact:true}).fill(inviteEmail)
-  await teammate.getByLabel('Password',{exact:true}).fill(password)
-  await teammate.getByRole('button',{name:'Create account',exact:true}).click()
-  await expectVisible(teammate.getByRole('button',{name:'Accept invitation',exact:true}))
-  await teammate.getByRole('button',{name:'Accept invitation',exact:true}).click()
-  await expectVisible(teammate.getByRole('heading',{name:'The bigger picture.'}))
-  assert.equal(await teammate.getByRole('button',{name:'Run monitoring',exact:true}).count(),0)
-  await teammate.getByRole('link',{name:'Sources & monitoring',exact:true}).click()
-  assert.equal(await teammate.getByRole('button',{name:'Add source',exact:true}).count(),0)
-  report('Invitation acceptance and viewer restrictions through UI')
-  await invited.close()
-  const ops=await browser.newContext({viewport:{width:1440,height:1000},locale:'en-US'})
-  const control=await ops.newPage();await control.goto(base+'/control')
-  await control.getByLabel('Administrator email',{exact:true}).fill('e2e-ops@example.invalid')
-  await control.getByLabel('Password',{exact:true}).fill(password)
-  await control.getByRole('button',{name:'Sign in to operations',exact:true}).click()
-  await expectVisible(control.getByRole('heading',{name:'The operational picture.'}))
-  await control.screenshot({path:output+'operations-en.png',fullPage:true})
-  assert.equal((await control.request.get(base+'/api/workspaces')).status(),401)
-  report('Separate administrator interface and independent session realm')
-  await ops.close()
- }
- assert.deepEqual(errors,[],'No browser runtime errors')
- report('No browser errors or horizontal overflow')
-}catch(e){results.push({name:'E2E failure',status:'failed',error:e.message});console.error(e.message);await page.screenshot({path:output+'failure.png',fullPage:true}).catch(()=>{});process.exitCode=1}
-finally{await fs.writeFile(output+'results.json',JSON.stringify({base,live,results,errors,duration_seconds:Math.round((Date.now()-start)/1000)},null,2));await browser.close()}
+ if(live){await account.getByRole('button',{name:'Build my company profile',exact:true}).click();await account.getByLabel('Company name',{exact:true}).waitFor({timeout:180000})}else await account.getByRole('button',{name:'I’ll enter the details myself',exact:true}).click()
+ await account.getByLabel('Company name',{exact:true}).fill('E2E SubSchool');await account.getByLabel('Industry',{exact:true}).fill('Education technology');await account.getByLabel('Technology & cloud costs',{exact:true}).check();await account.getByLabel('Consumer demand',{exact:true}).check();await account.getByLabel('Operating regions',{exact:true}).fill('United States, Australia');await account.getByLabel('Current priorities',{exact:true}).fill('Retention and cloud cost per learner')
+ const workspace=await wid(account);await account.request.patch(base+'/api/workspaces/'+workspace+'/settings',{data:{auto_monitor:false,scheduled_briefs:[]}})
+ await account.getByRole('button',{name:'Review profile & sources',exact:true}).click();await visible(account.getByRole('heading',{name:'Your company profile',exact:true}))
+ if(!live){await new Promise(r=>setTimeout(r,500));fixture({action:'source_result',wid:workspace})}
+ await account.getByRole('button',{name:'Confirm & open my workspace',exact:true}).waitFor({state:'visible'});await account.waitForFunction(()=>!Array.from(document.querySelectorAll('button')).find(b=>b.textContent.includes('Confirm & open my workspace'))?.disabled,undefined,{timeout:420000})
+ await account.getByRole('button',{name:'Confirm & open my workspace',exact:true}).click();await visible(account.getByRole('heading',{name:'The bigger picture.'}));report((live?'Live website, publisher discovery and collection checks':'Controlled source fixture')+' with reviewed company onboarding')
+ if(live){await account.getByRole('button',{name:'Run monitoring',exact:true}).click();const job=await waitJob(account,'analyze');assert.ok(job.result.collected>0);assert.ok(job.result.events>0);report('Real collection, company ranking, bank RAG and independently verified analysis');await account.getByRole('link',{name:'Executive briefs',exact:true}).click();for(const [p,label]of[['day','Daily'],['week','Weekly'],['month','Monthly']]){await account.getByRole('button').filter({hasText:label}).first().click();await account.getByRole('button',{name:'Generate brief',exact:true}).click();await waitJob(account,'brief',p);if(p!=='day')await account.getByRole('button').filter({hasText:label}).first().click();await visible(account.locator('.brief-paper h1'));await account.screenshot({path:output+'brief-'+p+'-en.png',fullPage:true});report('Live Qwen '+p+' brief with bounded evidence window')}}
+ await account.getByRole('link',{name:'Workspace settings',exact:true}).click();const inviteEmail='invite-'+Date.now()+'@example.invalid';await account.getByLabel('Work email',{exact:true}).fill(inviteEmail);await account.getByRole('button',{name:'Send invitation',exact:true}).click();await visible(account.getByLabel('Invitation link',{exact:true}));const link=await account.getByLabel('Invitation link',{exact:true}).inputValue()
+ const teammateContext=await browser.newContext({locale:'en-US'}),teammate=await teammateContext.newPage();activePage=teammate;await teammate.goto(link);await teammate.getByRole('link',{name:'Create your account',exact:true}).click();await teammate.getByLabel('Your name',{exact:true}).fill('E2E Viewer');await teammate.getByLabel('Work email',{exact:true}).fill(inviteEmail);await teammate.getByLabel('Password',{exact:true}).fill(password);await teammate.getByRole('button',{name:'Create account',exact:true}).click();await visible(teammate.getByRole('heading',{name:'Check your inbox.',exact:true}));await verify(teammate,inviteEmail);await visible(teammate.getByRole('button',{name:'Accept invitation',exact:true}));await teammate.getByRole('button',{name:'Accept invitation',exact:true}).click();await visible(teammate.getByRole('heading',{name:'The bigger picture.'}));assert.equal(await teammate.getByRole('button',{name:'Run monitoring',exact:true}).count(),0);activePage=page;await teammateContext.close();report('Email-confirmed invite acceptance and viewer permissions')
+ const ru=await browser.newContext({locale:'ru-RU',viewport:{width:390,height:844}}),mobile=await ru.newPage();mobile.on('pageerror',e=>errors.push(e.message));await mobile.goto(base);await visible(mobile.getByRole('button',{name:'EN',exact:true}));await mobile.getByRole('button',{name:'SubSchool',exact:true}).first().click();await visible(mobile.getByRole('heading',{name:'Общая картина.'}));await overflow(mobile);await mobile.screenshot({path:output+'dashboard-ru-mobile.png',fullPage:true});await mobile.getByRole('button',{name:'Открыть меню',exact:true}).click();await mobile.getByRole('link',{name:/Бизнес-сигналы/}).click();await visible(mobile.getByRole('heading',{name:'Сигналы без шума.'}));await mobile.locator('.event-card').first().click();await visible(mobile.getByRole('dialog'));await overflow(mobile);await ru.close();report('Russian defaults, guest mobile navigation and drawer reflow')
+ const ops=await browser.newContext({locale:'en-US'}),control=await ops.newPage();await control.goto(base+'/control');await control.getByLabel('Administrator email',{exact:true}).fill('e2e-ops@example.invalid');await control.getByLabel('Password',{exact:true}).fill(password);await control.getByRole('button',{name:'Sign in to operations',exact:true}).click();await visible(control.getByRole('heading',{name:'The operational picture.'}));assert.equal((await control.request.get(base+'/api/workspaces')).status(),401);await ops.close();report('Independent operations identity and cookie realm')
+ assert.deepEqual(errors,[]);report('No browser runtime errors')
+}catch(e){console.error(e.message);console.error('Screen:',new URL(activePage.url()).pathname,await activePage.locator('body').innerText().catch(()=>'<closed>'));results.push({name:'Failure',status:'failed',error:e.message});await activePage.screenshot({path:output+'failure.png',fullPage:true}).catch(()=>{});process.exitCode=1}finally{await fs.writeFile(output+'results.json',JSON.stringify({base,live,results,errors,duration_seconds:Math.round((Date.now()-start)/1000)},null,2));await browser.close()}

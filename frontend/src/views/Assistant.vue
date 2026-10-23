@@ -4,7 +4,7 @@ import Icon from '../components/Icon.vue'
 import {state,t,fmt,api,wp,notify} from '../state'
 const messages=ref<any[]>([]),question=ref(''),busy=ref(false),bottom=ref<HTMLElement>()
 onMounted(async()=>{try{messages.value=await api(wp('/assistant'))}catch(e:any){notify(e.message,true)}})
-const prompts=computed(()=>[t('Which risks deserve our attention this week?','Какие риски требуют нашего внимания на этой неделе?'),t('How do current events connect to our financing exposure?','Как события связаны с нашими рисками финансирования?'),t('What should we validate before acting on these opportunities?','Что проверить до реализации этих возможностей?')])
+const prompts=computed(()=>[t('Which risks deserve our attention this week?','Какие риски требуют нашего внимания на этой неделе?'),t('How do these developments affect our current priorities?','Как события связаны с нашими рисками финансирования?'),t('What should we validate before acting on these opportunities?','Что проверить до реализации этих возможностей?')])
 async function ask(prompt?:string){if(prompt)question.value=prompt;if(question.value.trim().length<4||busy.value)return;const q=question.value;question.value='';busy.value=true;try{const r=await api(wp('/assistant'),{method:'POST',body:{question:q,locale:state.locale}});messages.value.push(r);await nextTick();bottom.value?.scrollIntoView({behavior:'smooth'})}catch(e:any){question.value=q;notify(e.message,true)}finally{busy.value=false}}
 function open(id:string){state.selectedEvent=state.events.find(e=>e.id===id)}
 </script>

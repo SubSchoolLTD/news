@@ -1,83 +1,66 @@
-# SignalDesk verification record
+# SignalDesk 1.1 verification record
 
-Reviewed on 23 October 2026. The product is deployed at [analytics.subschool.us](https://analytics.subschool.us), with the shared-data [RU mirror](https://analytics.subschool.ru). This is a working, single-host hackathon product; the scope and operational limits are documented in the README.
+23 October 2026. Main product: [analytics.subschool.us](https://analytics.subschool.us); shared-data [RU mirror](https://analytics.subschool.ru). [Case criteria and review scenarios](CASE_CRITERIA.md).
 
-## Automated checks
+## What changed after hands-on feedback
 
-| Check | Result | Scope |
-|---|---|---|
-| Python backend | **30 passed** | Sessions, separate admin realm, tenant and role boundaries, one-time email-bound invitations, profile approval/versioning, SSRF and numeric-IP pinning, origins, credential redaction, retrieval provenance, withheld unsupported events, period windows, citation validation, independent brief schedules, scheduled empty briefs and email language. |
-| Vue/TypeScript production build | **Passed** | Type check and Vite build, lazy route chunks. Main bundle approximately 157 kB / 59 kB gzip; charts load separately. |
-| Deterministic Playwright | **8 groups passed** | Demo, evidence, bookmarks, notifications, research/trace, RU mobile, onboarding, invites/viewer restrictions, independent operations. Runs in CI without a paid model. |
-| Live Playwright | **13 groups passed, 141 seconds** | Approved Qwen, daily/weekly/monthly brief generation, grounded conversation, actual website extraction, live source collection, RAG/interpretation/verification, team UI and operations. No browser runtime errors or horizontal overflow. |
-| Public HTTPS smoke | **6 groups passed** | Main and mirror, exact locale rules, equal deployed release, security headers, actual owner and independent admin sign-in, session isolation and Secure/HttpOnly/SameSite cookies. |
-| Actual case grounding | **Passed** | Anonymised manufacturing client, actual case bank PDF, selected exact quote and page, explicit unknown debt terms. |
+Registration now gates both product routes and workspace APIs until a one-time email confirmation. The inbox screen supports resend, cross-browser confirmation and continuation of an email-bound invitation. Confirmed regions resolve stale geography questions from website extraction.
 
-Commands:
+The public tour uses a separate guest cookie, viewer permissions and explicit register/sign-in actions. It cannot change profiles, sources, roles, invitations, bookmarks or models, spend model tokens, export workspaces or read team emails/raw datasets. Exploring it preserves an existing signed-in product session. The password-authenticated jury account sees the same three genuine review workspaces with full product permissions. Published review spaces are visibly identified; new ordinary workspaces remain private.
+
+Runtime synthetic demo generation and the fixed source-recommendation catalogue were removed. The generator lives only in `backend/tests/fixtures.py`, excluded from the production image. Prior release demo records remain identifiable in an existing database and are inaccessible to the current public tour. Tests use controlled fixtures; live validation uses real websites, publisher feeds, case research and approved models.
+
+## Automated and live evidence
+
+- Backend: **45 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
+- Vue/TypeScript: production type check and Vite build pass. Main bundle is about 160 kB / 60 kB gzip; charts and routes load separately.
+- Deterministic browser checks cover the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations.
+- A full real-model browser replay passed **14 groups in 250 seconds**, including actual website extraction, publisher discovery, collection, interpretation and all three brief periods, with no browser runtime errors. That baseline used Qwen for generation/checking. Subsequent review-model changes are exercised by another live replay and the genuine review-workspace preparation record.
+- Manual Codex internal-browser review covers the inbox gate/direct-route block, guest restrictions, ordinary jury sign-in, genuine case evidence, EduHub sources/signals/briefs and grounded follow-up questions. Actual screenshots are documented in [DESIGN_AUDIT.md](DESIGN_AUDIT.md).
+
+Reproduce with:
 
 ```bash
 .venv/bin/python -m pytest backend/tests -q
 npm run build --prefix frontend
 node scripts/e2e.mjs
 RUN_LIVE_E2E=true node scripts/e2e.mjs
-PYTHONPATH=backend .venv/bin/python scripts/evaluate_case.py
+PYTHONPATH=backend .venv/bin/python scripts/report_review_quality.py
 node scripts/smoke_deployed.mjs
 ```
 
-Live checks consume the supplied gateway budget. The public smoke script checks private sign-ins only when the ignored `.local/ACCESS.md` exists on the owner's machine. It never logs passwords. CI runs a fresh API with email delivery and the worker disabled. One upstream TestClient deprecation warning is present; the tests pass.
+Live runs consume the provided gateway allowance. Development/CI mail is disabled and synthetic addresses are suppressed. The upstream Starlette TestClient deprecation warning is non-blocking. Local live QA can use an isolated database and API/Vite ports (`DATABASE_URL`, `PUBLIC_URL`, `ALLOWED_ORIGINS`, `API_PROXY`, `VITE_PORT`, `E2E_URL`) to avoid mixing controlled browser fixtures with genuine review data.
 
-The checked source release before the final documentation/localisation update was `0b01babe85e161ed256fd41cdd3b709362b27582`: [CI](https://github.com/SubSchoolLTD/news/actions/runs/39942453526) and [deployment](https://github.com/SubSchoolLTD/news/actions/runs/39942599535) passed. Subsequent commits use the same checks, and deployment runs only after a successful verification of that push. The authoritative current deployment revision is returned by `/api/health` on either domain.
+## Source and analysis findings
 
-## Analysis reviewed beyond pass/fail assertions
+The source-discovery job builds queries from reviewed industry/markets, attempts actual public indexes, researches publisher websites, discovers advertised feeds, collects sample publications and ranks only verified source IDs. It records provider/query, original page, headlines, verification time and coverage gaps. No named outlet is a universal fallback. GDELT TLS timeouts, challenged web search and publisher robots restrictions occurred during testing and were preserved as diagnostics, never bypassed. Model-proposed homepages remain explicitly labelled unverified leads until actual collection succeeds.
 
-### SubSchool: real website and reporting
+EduHub's reviewed markets are the United States and Australia. The resulting monitoring includes actual US specialist reporting and The Educator K/12's Australian RSS. The latter was found and verified during manual source research and is labelled accordingly; it is not a hardcoded recommendation for new users. Automatic discovery can still report an Australian coverage gap instead of inventing a source. A 2023 promotional/testimonial feed was rejected. Future webinar dates were found in a working publisher RSS and excluded from current-news selection. A diversified batch prevents one high-scoring publisher from occupying every slot when other relevant publishers exist.
 
-The live run read `subschool.us`, then the user-facing flow reviewed industry, priorities, exposures and suggested sources. The final collection retrieved **12 Bank of Russia releases and 12 EdSurge articles**. Three verified signals concerned AI adoption constraints, cost-efficient tutoring after funding changes, and assessment challenges from student AI reliance. Each connected to a concrete SubSchool activity such as lesson generation or grading, rather than merely summarising the article.
+A live SubSchool run exposed a schema mismatch: the model returned exact confirmed exposure values while the validator accepted field keys only. Both exact values and keys now resolve to real confirmed fields; invented values still fail. Unconfirmed customer geography caps evidence confidence and adds an explicit applicability check. Loan presence is never proof of floating-rate terms; a rate hold does not itself prove increased debt payments.
 
-The outputs did not assert district contracts or an existing K–12 customer base. They listed those as unknown. No bank excerpt directly supported these education issues, so the event explicitly said that a supporting bank view had not been verified. This is preferable to attaching unrelated macroeconomic analysis. Source availability and each collection error are visible in diagnostics. A regression test also edits source enablement and monitoring preferences while analysis is in progress: the worker now merges only its metadata atomically, preserving those user edits. The open dashboard discovers background runs and refreshes evidence every 30 seconds when idle. Another earlier run exercised rejection/correction and withheld an unsupported draft; deterministic tests verify this behaviour independently of model variability.
+The checked current dataset contains **19 CEO signals and 4 CFO signals**: SubSchool 3/3, EduHub 15/0, and the case client 1/1. Source checks returned 12+12 items for SubSchool, 12/10/12/2 for EduHub, and 14 CBR releases for the case client. Day/week/month brief evidence counts are **0/1/3**, **1/6/15**, and **1/1/1** respectively. These are actual observed counts, not fabricated quality scores.
 
-### Actual anonymised case client
+The genuine manufacturing workspace uses client **U_88715**, electrical-equipment manufacturing in Moscow, reported revenue about RUB 25.46bn, credit and leasing indicators from the supplied case subset. The public company identity/website, fixed/floating terms and maturities remain unknown. Its actual collected CBR release and financing analysis cite the original dated Alfa policy-rate report with an exact page-specific quote. Education events explicitly state when no directly supporting bank excerpt was verified.
 
-`scripts/evaluate_case.py` uses the supplied sample client **U_88715**: electrical-equipment manufacturing, Moscow, revenue about RUB 25.46bn, credit and leasing indicators. Evaluation priorities are stated assumptions. The script does not infer a real company identity or claim that the example website belongs to this client.
+The approved **Qwen 35B-A3B** generates interpretations. Live review found that its self-checker sometimes rejected honest conditional statements as facts, preventing useful briefs. The independent checker now uses the smaller approved **Gemma 26B-A4B** through the same supplied gateway. Custom private endpoints use their chosen model. Both model IDs, purposes, tokens, latency and status are recorded; retry usage is accumulated. No external named model provider or ready-made autonomous agent was added.
 
-The approved Qwen produced one supported financing signal. It retrieved **ALFA-Macro_Insights-Policy_Rate_11Sep.pdf**, page 1, and attached an exact quote from the supplied OCR text. The dated bank view reflected the report's expectation of a 14% rate through end-2026. The result preserved fixed/floating terms and actual maturities as unknown. The evaluation script asserts that the cited words exist on the cited page. Historical research is not represented as a fresh October report.
+Events retain their original article, reviewed company snapshot/version and decision role. Briefs use 24h/7d/30d publication windows, cite actual event IDs, preserve uncertainty and undergo independent content review plus one bounded correction. Empty windows produce an explicit coverage brief. A new-signal notice identifies an older edition; failed generation unlocks retry instead of leaving the button busy. A successful retry supersedes its old failure banner.
 
-Weak-model testing exposed UUID/reference confusion and rewritten quotes. The implementation now presents short `N1` news and `B1` bank references plus selectable exact quote IDs, then resolves them to persisted IDs itself. Retrieval returns the full relevant page, so conclusions at the bottom of the page are available. Unsupported results remain unpublished after a bounded retrieve/correct/recheck round.
+The assistant uses short evidence aliases, resolves citations server-side, checks answers independently and repairs once. The check specifically rejects applying a US-only funding program to Australia without local evidence. Honest coverage gaps and conditional reporting tests remain valid responses. Unsupported answers are withheld rather than saved as established analysis.
 
-### Briefs
+## Genuine review dataset and limitations
 
-The live replay generated day/week/month briefs from **2 / 5 / 8** in-window events. Dates and references were checked, and the written output was read. The day report prioritised financing and supplier checks; the week connected financing, currency, labour and regulation; the month connected liquidity, supplier resilience, automation and demand scenarios. Actions identify treasury, procurement, sales, legal or finance and include suggested planning horizons. A reader can open the supporting events.
+`prepare_live_review.py` creates actual SubSchool, EduHub and case-client workspaces, including CEO/CFO interpretations where prepared and day/week/month briefs. `report_review_quality.py` inspects current versions, source health, publication windows, exact bank quotes and calibrated summaries. Its ignored report is `output/quality/revision-review.json`; the live browser record is `output/quality/revision-live-e2e.json` and screenshots are under `output/revision-audit/`. The private import bundle and jury password are owner-only local files, never Git contents. Preparation is idempotent; API/network failures do not fabricate replacement events.
 
-The report states evidence gaps. Quiet periods produce an explicit coverage report without claiming that the market is calm. Generated wording can still sound more urgent than the underlying evidence warrants; the interface identifies it as decision support and exposes the facts, assumptions and sources. These are reviewed examples, not a statistically validated accuracy benchmark or a promise that every future answer is correct.
+These reviewed runs establish reproducibility and expose specific defects; they are not a statistically measured accuracy benchmark. Some publisher access can fail between runs, sparse windows can be empty, OCR can be imperfect and future model outputs can still require correction. The product records those limits and preserves original sources for inspection.
 
-## Manual interface and design review
+## Deployment and email
 
-The product was walked through in Codex's internal browser on the public deployment: bank entry → overview → event impact → exact bank citation → generated brief → monitoring → model settings → company onboarding. Screenshots were saved before changes and inspected again after fixes. [Design audit and evidence](DESIGN_AUDIT.md).
+Both HTTPS domains use the same persisted application through main Caddy and the RU Nginx/VPN route. CI gates deployment; the current revision is returned by `/api/health`. SQLite has daily same-host backups retaining 14 snapshots. Distributed workers, off-site recovery and a device/accessibility lab remain production follow-up work.
 
-Separate browser automation checked a 390px Russian mobile viewport, bookmarks, notifications, registration, source setup, an invitation accepted by a second account with viewer restrictions, and separate operations authentication. There were no runtime errors in the successful runs. This is not a full assistive-technology certification or a multi-browser device lab.
+The SendPulse sender and OAuth were verified in the original release; an owner verification message was accepted by the service. Inbox delivery/read status is not claimed. Alerts/brief delivery require a verified user and explicit opt-in. No test mail was sent to an unrelated person. The repository remains private without GitHub jury access, as the owner requested after the paid-seat restriction; app jury access is separate.
 
-## Deployment and email verification
+## Ongoing quality process
 
-Both HTTPS domains point to the same persisted application through the existing main Caddy and RU Nginx/VPN route. The RU certificate was issued successfully and renewal is configured. A consistent SQLite backup was produced; a daily backup job retains 14 copies. Backups are on the same host/volume, not off-site disaster recovery.
-
-SendPulse OAuth and the configured sender were verified. The owner welcome/verification message was **accepted by SendPulse**, with no retries. Inbox delivery/read status is not claimed. Synthetic recipients are suppressed; business alerts and briefs require a verified account and explicit opt-in. English and Russian authentication email templates, role-matched alerts, and scheduled quiet-period delivery are covered by the backend tests. No test mail was sent to an unrelated person.
-
-## Artifact locations
-
-Local ignored records: `output/playwright/` (screenshots and deterministic/current results), `output/quality/live-e2e.json` (preserved live run), `output/quality/case-grounding.json` (actual case run and evidence), `output/deployed/` (public smoke), and `output/design-audit/` (original browser captures). The selected inspected design screenshots are versioned in `docs/assets/`.
-
-The product key and deployment secrets are in GitHub Actions secrets. Private owner/admin passwords are only in the ignored local handoff and server-side account hashes. They are not in this report, repository history or browser bundles.
-
-## Proposed ongoing quality process
-
-The prototype already records source diagnostics, every agent step, accepted/withheld drafts, model status/tokens/latency and user feedback. Operations exposes usage, failures and feedback. These are observation tools; the example runs above do not establish production-wide precision.
-
-Recommended operating procedure for a rollout:
-
-1. **Each working day:** inspect failed runs, source coverage, outbox failures, gateway consumption and p50/p95 latency. Investigate a sudden increase in source errors, unsupported drafts or empty briefs before lowering a relevance threshold. Separate empty coverage from a quiet market.
-2. **Each week:** an analyst and a business-domain reviewer label a sample of fresh, previously unseen news across at least manufacturing, education/services and trade, with CEO/CFO/treasury perspectives. Preserve the reviewed company profile, source text/date, model ID and release. Include ambiguous loan terms, opinion articles, stale bank reports and irrelevant foreign regulation.
-3. **Score each output:** factual support, correct company/role connection, honest geography/customer assumptions, bank-attribution accuracy, causal usefulness and actionable specificity, each on a 0–2 rubric. Mark critical factual or bank-attribution errors separately. Report precision@5 for relevance, valid-citation rate, unsupported-claim rate, bank-attribution accuracy, source coverage/age and reviewer agreement. Report both numerator and denominator; do not hide withheld outputs or empty runs.
-4. **Connect user feedback:** compare useful/not-relevant ratings by company, industry and decision role, with at least ten labelled items before drawing a segment conclusion. Inspect the reasons with the original evidence; feedback is not permission for a model to invent stronger claims.
-5. **Before model/prompt/source changes:** replay a fixed regression set plus a held-out fresh set. Require zero critical invented bank quotes or company facts in that set and compare relevance/utility to the previous release. Keep results and human labels with the release. A model may pass one scenario and fail another, so use the approved case model for this comparison.
-
-Human-labelled precision, utility and reviewer agreement are proposed rollout measurements, not already-populated dashboard statistics. The repository provides reproducible live checks and trace exports to support this process. Distributed load, off-site recovery and a statistically powered content-quality benchmark remain future production work.
+Daily: inspect failed/withheld runs, source freshness and coverage, outbox failures, gateway usage and latency. Weekly: a business expert and analyst label fresh held-out news across industries and CEO/CFO/treasury roles. Score factual support, company/role fit, geographic assumptions, bank attribution, causal usefulness and action specificity on a 0–2 rubric; mark invented company facts or bank quotes separately. Track precision@5, valid-citation rate, unsupported-claim rate, coverage/age and reviewer agreement with numerator/denominator, including withheld and empty runs. Compare usefulness feedback to originals. Before model/prompt/source changes, replay fixed regressions plus fresh cases and retain model/release/profile/source records. No fabricated expert-score metric is populated in the dashboard.

@@ -127,15 +127,116 @@ def test_bank_retrieval_has_real_page_provenance(client):
         assert chunk['page']>=1 and len(chunk['text'])>70 and chunk['published_at']
 
 
-def test_demo_workspaces_are_isolated_and_labelled(client):
+def test_guest_tour_is_read_only_and_uses_published_workspaces(client):
+    from fixtures import seed_demo
+    owner=register(client)
+    with DB() as db:
+        for variant in ['industrial','subschool']:
+            w=seed_demo(db,db.get(User,owner['id']),variant);w.demo=False
+            w.settings={**w.settings,'showcase':True,'showcase_variant':variant}
+        db.commit()
     a=client.post('/api/demo',json={'variant':'industrial'}).json();wid=a['workspace_id']
-    events=client.get(f'/api/workspaces/{wid}/events').json()
-    assert len(events)==8 and all(e['is_demo'] for e in events)
-    b=TestClient(app);other=b.post('/api/demo',json={'variant':'subschool'}).json()
-    assert other['workspace_id']!=wid
-    assert b.get(f'/api/workspaces/{wid}/events').status_code==404
-    education=b.get(f"/api/workspaces/{other['workspace_id']}/events").json()
-    assert events[0]['en']['why']!=education[0]['en']['why']
+    client.headers['X-SignalDesk-Tour']='1'
+    assert a['user']['is_guest']
+    assert len(client.get('/api/workspaces').json())==2
+    assert client.get(f'/api/workspaces/{wid}').json()['role']=='viewer'
+    for path in ['/analyze','/briefs','/assistant','/source-discovery','/sources','/invites']:
+        assert client.post(f'/api/workspaces/{wid}'+path,json={'period':'day','name':'Blocked','url':'https://example.com/feed','email':'test@example.invalid'}).status_code==403
+    assert client.post('/api/workspaces',json={'name':'Forbidden'}).status_code==403
+    assert client.patch('/api/auth/me',json={'name':'Changed'}).status_code==403
+    assert client.get(f'/api/workspaces/{wid}/export').status_code==403
+    assert client.get(f'/api/workspaces/{wid}/members').status_code==403
+    assert client.get(f'/api/workspaces/{wid}/datasets').status_code==403
+    b=TestClient(app);other=b.post('/api/demo',json={'variant':'industrial'}).json()
+    assert other['workspace_id']==wid and other['user']['id']!=a['user']['id']
+    # Opening the tour must not overwrite the signed-in product account.
+    del client.headers['X-SignalDesk-Tour']
+    assert client.get('/api/auth/me').json()['id']==owner['id']
+    assert client.post(f'/api/workspaces/{wid}/analyze').status_code==200
+
+
+def test_feature_references_resolve_only_exact_confirmed_company_values():
+    from app.pipeline import company_feature_keys
+    profile={'industry':'EdTech','exposures':['Data privacy / regulation'],'regions':[]}
+    assert company_feature_keys(profile,['industry','Data privacy / regulation'])==['industry','exposures']
+    assert company_feature_keys(profile,['floating debt','regions','Not confirmed'])==[]
+
+
+def test_anonymised_import_can_be_reviewed_without_inventing_a_website(client):
+    register(client);wid=workspace(client)
+    data={'name':'Case client','industry':'Manufacturing','exposures':['Loans'],'reviewed':True}
+    assert client.put(f'/api/workspaces/{wid}/profile',json=data).status_code==422
+    with DB() as db:
+        ws=db.get(Workspace,wid);ws.profile={'synthetic_company_id':'U_TEST','dataset_features':{'PRODUCTS':'loans'}};db.commit()
+    assert client.put(f'/api/workspaces/{wid}/profile',json=data).status_code==200
+
+
+def test_email_verification_is_required_server_side_and_signs_in_other_browser(client):
+    import re
+    from urllib.parse import urlsplit,parse_qs
+    r=client.post('/api/auth/register',json={'name':'New owner','email':'pending@example.invalid','password':'new-secure-password'})
+    assert r.status_code==200 and not r.json()['verified']
+    assert client.get('/api/auth/me').status_code==200
+    assert client.get('/api/workspaces').status_code==403
+    assert client.post('/api/workspaces',json={'name':'Blocked'}).status_code==403
+    with DB() as db:
+        mail=items(db,'auth','mail')[0].payload
+        link=re.search(r'href="([^"]+/verify\?token=[^"]+)"',mail['html'])[1]
+        token=parse_qs(urlsplit(link).query)['token'][0]
+    other=TestClient(app)
+    result=other.post('/api/auth/verify',json={'token':token})
+    assert result.status_code==200 and result.json()['user']['verified']
+    assert other.get('/api/auth/me').status_code==200
+    assert other.post('/api/workspaces',json={'name':'Allowed'}).status_code==200
+    assert client.get('/api/workspaces').status_code==200
+    assert other.post('/api/auth/verify',json={'token':token}).status_code==400
+
+
+def test_verification_restores_only_a_matching_email_bound_invitation(client):
+    import re,html
+    from urllib.parse import urlsplit,parse_qs
+    register(client);wid=workspace(client)
+    link=client.post(f'/api/workspaces/{wid}/invites',json={'email':'invited@example.invalid','role':'viewer'}).json()['invite_url']
+    invitation=parse_qs(urlsplit(link).query)['token'][0]
+    person=TestClient(app)
+    assert person.post('/api/auth/register',json={'email':'invited@example.invalid','password':'secure-test-password','invite_token':invitation}).status_code==200
+    assert person.post('/api/invites/'+invitation+'/accept').status_code==403
+    with DB() as db:
+        mail=next(x.payload for x in items(db,'auth','mail') if x.payload['to']=='invited@example.invalid')
+        token=parse_qs(urlsplit(html.unescape(re.search(r'href="([^"]+/verify\?token=[^"]+)"',mail['html'])[1])).query)['token'][0]
+    fresh=TestClient(app)
+    assert fresh.post('/api/auth/verify',json={'token':token}).json()['invite_token']==invitation
+    assert fresh.post('/api/invites/'+invitation+'/accept').status_code==200
+    assert fresh.get(f'/api/workspaces/{wid}').json()['role']=='viewer'
+
+
+def test_source_discovery_has_no_default_outlets_and_invalidates_on_market_change(client,monkeypatch):
+    import app.discovery as discovery
+    from app.pipeline import process_job
+    owner=register(client);wid=workspace(client)
+    profile={'name':'Education publisher','website':'https://example.com','industry':'Education news','regions':['United States','Australia'],'exposures':['Reader demand']}
+    assert client.put(f'/api/workspaces/{wid}/profile',json=profile).status_code==200
+    assert client.get(f'/api/workspaces/{wid}/source-suggestions').json()==[]
+    seen=[]
+    def search(q):
+        seen.append(q)
+        return [{'url':'https://publisher.example/news','title':'Education policy','country':'Australia','provider':'Test index','query':q}, {'url':'http://127.0.0.1/private','title':'Attack','country':'','provider':'Test','query':q}]
+    monkeypatch.setattr(discovery,'search_index',search)
+    monkeypatch.setattr(discovery,'search_web',lambda q:[])
+    monkeypatch.setattr(discovery,'search_directory',lambda q:[])
+    monkeypatch.setattr(discovery,'verify_publisher',lambda h:{'name':'Publisher','url':'https://example.com/education-feed','type':'rss','kind':'news','publisher':'publisher.example','country':h['country'],'sample_count':3,'sample_headlines':['Education policy'],'verified_at':now()})
+    def complete(w,purpose,prompt,**kw):
+        if purpose=='source_search_plan':return {'markets':['United States','Australia'],'queries':[{'news_query':'education sourcecountry:australia','web_query':'education Australia RSS'}]}
+        return {'sources':[{'id':'S1','eligible':True,'reason':{'en':'Relevant education policy in Australia','ru':'Образовательная политика Австралии'}},{'id':'invented','reason':{'en':'x','ru':'x'}}]}
+    monkeypatch.setattr(discovery.llm,'complete',complete)
+    j=client.post(f'/api/workspaces/{wid}/source-discovery').json();process_job(j['id'])
+    sources=client.get(f'/api/workspaces/{wid}/source-suggestions').json()
+    assert seen==['education sourcecountry:australia'] and len(sources)==1
+    assert sources[0]['sample_count']==3 and sources[0]['country']=='Australia'
+    connected=client.post(f'/api/workspaces/{wid}/sources',json={'name':sources[0]['name'],'url':sources[0]['url'],'type':'rss','kind':'news'}).json()
+    assert connected['verified_at'] and connected['sample_count']==3
+    assert client.put(f'/api/workspaces/{wid}/profile',json={**profile,'regions':['Canada']}).status_code==200
+    assert client.get(f'/api/workspaces/{wid}/source-suggestions').json()==[]
 
 
 def test_unsupported_ai_drafts_are_withheld(client,monkeypatch):
@@ -177,6 +278,22 @@ def test_brief_rejects_invented_citation_ids(client,monkeypatch):
         monkeypatch.setattr(pipeline.llm,'complete',lambda *args,**kwargs:{"en":lang.copy(),"ru":lang.copy()})
         with pytest.raises(ValueError,match='evidence references'):generate_brief(db,j,ws)
         assert not items(db,wid,'brief')
+
+
+def test_brief_withholds_unresolved_company_context_claims(client,monkeypatch):
+    from app import pipeline
+    owner=register(client);wid=workspace(client)
+    with DB() as db:
+        ws=db.get(Workspace,wid)
+        event=record(db,wid,'event',{'decision_role':'ceo','published_at':now(),'relevance':80,'sentiment':'risk','en':{'title':'Conditional signal'},'ru':{'title':'Условный сигнал'}})
+        j=Job(workspace_id=wid,user_id=owner['id'],kind='brief',input={'period':'day'});db.add(j);db.commit()
+        section={'title':'Unsupported certainty','executive_summary':'Company must pivot','themes':[{'title':'x','event_ids':[event.id]}],'priorities':[{'action':'x','event_ids':[event.id]}]}
+        def complete(w,purpose,*a,**kw):
+            return {'supported':False,'issues':['Unknown target segment asserted as a fact']} if purpose=='verify_brief' else {'en':section.copy(),'ru':section.copy()}
+        monkeypatch.setattr(pipeline.llm,'complete',complete)
+        with pytest.raises(ValueError,match='withheld'):generate_brief(db,j,ws)
+        assert not items(db,wid,'brief')
+        assert any(s['name']=='brief_correction_review' and s['status']=='withheld' for s in j.steps)
 
 
 def test_queued_briefs_deduplicate_by_period_and_role(client):
@@ -269,3 +386,72 @@ def test_draft_edits_do_not_change_published_company_context(client):
     confirmed=client.put(f'/api/workspaces/{wid}/profile',json={'reviewed':True}).json()
     assert confirmed['profile']['industry']=='Education' and confirmed['profile']['version']==2
     assert confirmed['draft_profile'] is None
+
+
+def test_confirmed_regions_resolve_stale_website_geography_question(client):
+    register(client);wid=workspace(client)
+    p={'name':'EduHub','website':'https://example.com','industry':'Education media','exposures':['Reader demand'],'regions':['United States','Australia'],'unknowns':['Target customer geography and primary market regions','Actual revenue'],'reviewed':True}
+    r=client.put(f'/api/workspaces/{wid}/profile',json=p)
+    assert r.status_code==200 and r.json()['profile']['unknowns']==['Actual revenue']
+
+
+def test_imported_source_metadata_cannot_override_record_identity(client):
+    register(client);wid=workspace(client)
+    with DB() as db:
+        row=record(db,wid,'source',{'id':'discovery-lead','name':'Imported primary source','url':'https://example.com/feed','type':'rss'})
+        sid=row.id;db.commit()
+    source=client.get(f'/api/workspaces/{wid}/sources').json()[0]
+    assert source['id']==sid
+    assert client.patch(f'/api/workspaces/{wid}/sources/{sid}',json={'enabled':False}).status_code==200
+
+
+def test_relevance_ranking_keeps_other_publishers_in_the_analysis_batch():
+    from app.pipeline import diverse_news
+    ranked=[{'id':str(i),'url':f'https://specialist.example/news/{i}'} for i in range(8)]+[{'id':'au','url':'https://regional.example/education'}]
+    chosen=diverse_news(ranked)
+    assert len(chosen)==6 and any(c['id']=='au' for c in chosen)
+    assert chosen[0]['id']=='0' and chosen[1]['id']=='1'
+
+
+def test_assistant_withholds_unsupported_cross_market_claims(client,monkeypatch):
+    from app import main
+    register(client);wid=workspace(client)
+    calls=[]
+    def complete(w,purpose,*a,**kw):
+        calls.append(purpose)
+        if purpose=='verify_follow_up':return {'supported':False,'issues':['US funding is incorrectly applied to Australia']}
+        return {'answer':'ESSER expires in Australia','event_ids':[],'bank_ids':[],'follow_up':'Next?'}
+    monkeypatch.setattr(main.llm,'complete',complete)
+    r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we report in Australia?'})
+    assert r.status_code==503 and calls==['follow_up','verify_follow_up','repair_follow_up','verify_follow_up']
+    with DB() as db:assert not items(db,wid,'message')
+
+
+def test_assistant_resolves_only_workspace_evidence_aliases(client,monkeypatch):
+    from app import main
+    register(client);wid=workspace(client)
+    with DB() as db:
+        e=record(db,wid,'event',{'decision_role':'ceo','profile_version':1,'en':{'title':'Local reporting'},'article':{'url':'https://example.com/news','text':'Local news'}});eid=e.id;db.commit()
+    def complete(w,purpose,*a,**kw):
+        if purpose=='verify_follow_up':return {'supported':True,'issues':[]}
+        return {'answer':'Check the original reporting in E1.','event_ids':[],'bank_ids':[],'follow_up':'Which assumption matters?'}
+    monkeypatch.setattr(main.llm,'complete',complete)
+    r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we check?'})
+    assert r.status_code==200 and r.json()['event_ids']==[eid]
+    assert r.json()['answer']=='Check the original reporting in [1].'
+
+
+def test_brief_list_uses_current_company_context_version(client):
+    register(client);wid=workspace(client)
+    with DB() as db:
+        ws=db.get(Workspace,wid);ws.profile={'version':2}
+        record(db,wid,'brief',{'period':'week','decision_role':'ceo','profile_version':1})
+        current=record(db,wid,'brief',{'period':'week','decision_role':'ceo','profile_version':2});bid=current.id;db.commit()
+    assert [b['id'] for b in client.get(f'/api/workspaces/{wid}/briefs').json()]==[bid]
+
+
+def test_job_trace_exposes_period_without_arbitrary_internal_inputs(client):
+    from app.main import job_public
+    j=Job(id='trace-test',workspace_id='test',kind='brief',input={'period':'week','decision_role':'cfo','internal_secret':'hidden'})
+    public=job_public(j)
+    assert public['input']=={'period':'week','decision_role':'cfo'}

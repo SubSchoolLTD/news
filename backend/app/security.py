@@ -48,30 +48,50 @@ def issue_session(db, response: Response, user_id: str, realm="product"):
     token = secrets.token_urlsafe(40)
     expires = (datetime.now(timezone.utc) + timedelta(days=14 if realm == "product" else 1)).isoformat(timespec="seconds").replace("+00:00", "Z")
     db.add(Session(token_hash=hash_token(token), user_id=user_id, realm=realm, expires_at=expires))
-    response.set_cookie("sd_admin" if realm == "admin" else "sd_session", token, httponly=True, secure=SECURE, samesite="lax", max_age=86400 * (1 if realm == "admin" else 14), path="/api/ops" if realm == "admin" else "/")
+    response.set_cookie({"admin": "sd_admin", "guest": "sd_guest"}.get(realm, "sd_session"), token, httponly=True, secure=SECURE, samesite="lax", max_age=86400 * (14 if realm == "product" else 1), path="/api/ops" if realm == "admin" else "/")
 
 
-def current_user(request, db, realm="product"):
-    token = request.cookies.get("sd_admin" if realm == "admin" else "sd_session", "")
+def is_guest(user):
+    return user.preferences.get("account_kind") == "guest" or (user.email.startswith("demo-") and user.email.endswith("@example.invalid"))
+
+
+def require_account(user):
+    if is_guest(user):
+        raise HTTPException(403, "This is a read-only tour. Create an account or sign in to your own workspace.")
+
+
+def current_user(request, db, realm="product", allow_unverified=False):
+    if realm == "product" and request.headers.get("x-signaldesk-tour") == "1":
+        realm = "guest"
+    token = request.cookies.get({"admin": "sd_admin", "guest": "sd_guest"}.get(realm, "sd_session"), "")
     session = db.get(Session, hash_token(token)) if token else None
     if not session or session.realm != realm or session.expires_at < now():
         raise HTTPException(401, "Please sign in.")
     user = db.get(Admin if realm == "admin" else User, session.user_id)
     if not user or getattr(user, "disabled", False):
         raise HTTPException(401, "Please sign in.")
+    if realm in {"product", "guest"} and is_guest(user) and request.method not in {"GET", "HEAD"}:
+        require_account(user)
+    if realm == "product" and not allow_unverified and not user.verified and not is_guest(user):
+        raise HTTPException(403, "Confirm your email before opening your workspace.")
     return user
 
 
 def access(request, db, wid, roles=None):
     user = current_user(request, db)
+    tail = request.url.path.partition(f"/workspaces/{wid}")[2]
+    if is_guest(user) and (request.method not in {"GET", "HEAD"} or tail.startswith(("/export", "/members", "/datasets", "/model"))):
+        require_account(user)
     member = db.query(Member).filter_by(user_id=user.id, workspace_id=wid).first()
     if not member:
         raise HTTPException(404, "Workspace not found.")
-    if roles and member.role not in roles:
+    if roles and (member.role not in roles or is_guest(user)):
         raise HTTPException(403, "Your workspace role does not allow this action.")
     workspace = db.get(Workspace, wid)
     if not workspace:
         raise HTTPException(404, "Workspace not found.")
+    if is_guest(user) and (workspace.demo or not workspace.settings.get("showcase")):
+        raise HTTPException(404, "This workspace is not part of the public tour.")
     return user, workspace, member
 
 

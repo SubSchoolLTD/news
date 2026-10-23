@@ -1,55 +1,45 @@
-# SignalDesk screenshot audit
+# SignalDesk 1.1 screenshot and journey audit
 
-23 October 2026. Product Design audit of the implemented experience, using the Codex internal browser. The task was to make the existing working product clearer and easier to use. SubSchool's purple, typography and surface conventions remain the visual foundation.
+23 October 2026. Product Design audit using Codex's internal browser. The owner's supplied onboarding screenshot and a fresh capture of the previous public demo were the starting evidence. SubSchool's purple, system typography, neutral surfaces and rounded cards remain the visual foundation.
 
-## Journey and health after changes
+## Findings and changes
 
-1. **Bank-shell entry — clear.** The persistent Business signals entry and primary action open the product. An explicit integration-prototype label and demonstration notice prevent the shell from implying a real connected bank account.
-2. **Overview — improved.** At the actual 847px internal-browser viewport, the sidebar now collapses and the metrics/charts have useful reading width. Category counts and donut segments share the same data. The decision queue leads to a specific action and its reasoning.
-3. **Event → evidence — clear.** Reporting, company relevance, conditional impact, dated bank view, suggested action and uncertainty have distinct sections. The second tab shows the original PDF, page and exact selected quote. The evidence score is labelled `/100`, avoiding a misleading probability interpretation.
-4. **Executive brief — usable.** Period selection, reporting dates, evidence count, narrative, linked themes and action agenda are readable. Previous editions and print/copy actions are available. The content remains visibly marked as synthetic when generated from the demonstration workspace.
-5. **Monitoring, model and onboarding — functional.** Sources, exclusions, schedules and role thresholds are editable; the model defaults to the approved gateway. Website onboarding makes the review step and unknown financials explicit. Invitation controls in a demo explain why a real workspace is needed.
-
-## Findings addressed
-
-| Severity | Evidence/findings | Change and recheck |
+| Severity | Observed problem | Change and evidence |
 |---|---|---|
-| High | Ring chart displayed sentiment while its legend described business categories. | Both derive from category counts; the inspected overview shows 3/1/1/3 and a matching total of 8. |
-| Medium | At 847px, a full sidebar compressed dashboard text and content. | Collapsible navigation starts at 1020px. Rechecked in the internal browser. |
-| Medium | Muted text and dark-theme primary text were hard to read. | Darkened muted colours, increased label sizes and corrected dark-theme button text. No blanket WCAG conformance claim. |
-| Medium | Evidence strength looked like a statistical percentage. | Changed presentation to `/100`; relevance remains a company/role score. |
-| Medium | A missing single-letter icon import rendered the close action incorrectly. | Fixed the X icon, accessible labels and initial backward-tab focus handling. Rechecked the drawer and evidence tab. |
-| Medium | The added chart-data table caused horizontal overflow on a 390px viewport. | Put the screen-reader table inside the visually hidden wrapper; deterministic and live mobile replays passed. |
-| Medium | Large eager JavaScript bundle delayed initial loading. | Routes and chart code now load separately; main gzip size is about 59 kB. |
+| Critical | Registration could proceed into onboarding before email ownership was confirmed. | Dedicated inbox screen; direct product navigation redirects there and workspace APIs return 403. Confirmation resumes onboarding/invitation, including a different browser. |
+| High | Public case entry looked like an unrestricted owner account. | Explicit read-only live-tour banner, register/sign-in CTAs, reduced navigation, disabled decision-role changes and server enforcement. Team emails, raw datasets, exports and mutations are blocked. |
+| High | EduHub's US/AU context received fixed Russian news outlets. | Real discovery/verification with visible provenance and market gaps. Genuine specialist feeds are connected in the review workspace; the Australian source was researched and tested manually. No universal outlet fallback remains. |
+| High | Synthetic events were used to populate the public demo. | The current tour reads genuine collected reporting and model analysis shared with the jury account. Synthetic generators are test-only and absent from the production image. Counts/charts/landing preview come from stored evidence. |
+| Medium | An old geography question contradicted regions the user had just confirmed. | Confirmed regions resolve the stale question; model checks use confirmed structured fields. |
+| Medium | A working RSS included old promotional posts or future webinar dates. | Freshness and future-date checks; source sampling, actual item counts and coverage diagnostics. Paused sources are labelled paused. |
+| Medium | One publisher monopolised the high-score batch. | Source diversity preserves other relevant publishers before filling remaining slots. Live EduHub analysis includes US and Australian evidence. |
+| Medium | A failed brief could leave generation busy; old failures remained after successful retry. | Busy state follows active jobs; a newer run supersedes the old banner. New evidence marks an older brief edition. |
+| Medium | Conditional interpretations became categorical in some summaries and assistant answers transferred US policy to Australia. | Independent approved-model checking, bounded correction, explicit geographic limitations and source-bound citations. Unsupported output is withheld. |
+| Medium | Full jury workspaces were also visible in the public tour without a clear publication label. | Owner view identifies the published review space and links to creating a private workspace. Ordinary new workspaces are private. |
 
-Initial captures are retained in ignored `output/design-audit/01-overview-before.png` through `03-evidence-before.png`. All images below are actual post-change internal-browser captures, saved without alteration and inspected from disk.
+## Inspected journey
 
-## Captured evidence
+1. Existing public demo captured before changes.
+2. Sign in as a pending-email QA account → inbox screen → direct `/overview` attempt → inbox screen again.
+3. Public live tour → real case-client overview → event reporting and dated bank research → confirm absent settings/analysis controls.
+4. Ordinary password sign-in as jury → same three workspaces → full navigation/monitoring controls.
+5. EduHub → connected sources and their actual collection counts → signals → period briefs → grounded question separated by US/Australia.
+6. Public main and mirror rechecked after deployment; automated checks additionally exercise a 390px Russian mobile viewport, invitation/viewer permissions and independent operations.
 
-### 1. Bank entry
+## Screenshot evidence
 
-![Prototype bank entry](assets/04-bank-entry.png)
+All captures below are original internal-browser images, saved directly and inspected from disk. Playwright artifacts are separate test evidence and are not substituted for the Product Design captures.
 
-### 2. Overview after changes
+![Mandatory email confirmation](assets/revision-email-gate.png)
 
-![Overview](assets/05-overview-after.png)
+![Read-only guest tour](assets/revision-guest.png)
 
-### 3. Event interpretation
+![Password-authenticated jury navigation](assets/revision-jury.png)
 
-![Event impact and score labels](assets/06-event-after.png)
+![Genuine EduHub daily brief](assets/revision-daily-brief.png)
 
-### 4. Dated, page-specific bank evidence
+Screenshots of the earlier 1.0 audit remain in the repository history and `output/design-audit/`. The revised working captures are under `output/revision-audit/`.
 
-![Original bank report and exact quote](assets/07-evidence-after.png)
+## Limits
 
-### 5. Generated daily brief
-
-![Brief selection and narrative](assets/08-brief-after.png)
-
-![Linked themes and decision agenda](assets/09-brief-agenda-after.png)
-
-## Limits and follow-up
-
-The screenshot audit covers the observed journey and viewport. Playwright separately covers desktop and 390px Russian mobile flows; those automation screenshots are QA evidence, not substituted internal-browser audit captures. Keyboard/focus semantics were improved, but no full screen-reader, browser/device matrix or formal accessibility audit was performed. AI language may still overstate urgency; evidence and assumptions remain exposed for review. A small case-model budget also limits the number of live repetitions.
-
-No open blocker was found in the captured journey. For a production rollout beyond the hackathon, validate with actual decision makers, measure false positives over time, and test assistive technologies before making a formal accessibility claim.
+The audit covers the observed journeys and viewports. Keyboard semantics and reflow are tested, but no formal screen-reader/device lab or WCAG certification is claimed. Generated language can still need correction; source fidelity, applicability and evidence gaps matter more than a polished but unsupported answer. The underlying content-quality and operational follow-up process is recorded in [QUALITY.md](QUALITY.md).

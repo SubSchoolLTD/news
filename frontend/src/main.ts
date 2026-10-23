@@ -3,6 +3,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import App from './App.vue'
 const Landing=()=>import('./views/Landing.vue')
 const Auth=()=>import('./views/Auth.vue')
+const CheckEmail=()=>import('./views/CheckEmail.vue')
 const Onboard=()=>import('./views/Onboard.vue')
 const Dashboard=()=>import('./views/Dashboard.vue')
 const Events=()=>import('./views/Events.vue')
@@ -15,7 +16,7 @@ const BankEntry=()=>import('./views/BankEntry.vue')
 import './style.css'
 
 export const router=createRouter({history:createWebHistory(),routes:[
- {path:'/',component:Landing}, {path:'/login',component:Auth}, {path:'/register',component:Auth}, {path:'/verify',component:Auth}, {path:'/reset',component:Auth}, {path:'/invite',component:Auth},
+ {path:'/',component:Landing}, {path:'/login',component:Auth}, {path:'/register',component:Auth}, {path:'/check-email',component:CheckEmail}, {path:'/verify',component:Auth}, {path:'/reset',component:Auth}, {path:'/invite',component:Auth},
  {path:'/alfa-business',component:BankEntry}, {path:'/onboarding',component:Onboard}, {path:'/overview',component:Dashboard}, {path:'/events',component:Events}, {path:'/briefs',component:Briefs}, {path:'/sources',component:Sources}, {path:'/company',component:Onboard}, {path:'/settings',component:Settings}, {path:'/assistant',component:Assistant}, {path:'/control',component:Operations}, {path:'/:pathMatch(.*)*',redirect:'/'},
 ]})
 createApp(App).use(router).mount('#app')

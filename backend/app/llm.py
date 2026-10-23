@@ -43,6 +43,11 @@ def parse_json(content):
 
 def complete(workspace, purpose, prompt, *, job_id="", max_tokens=4500, system=SYSTEM):
     cfg = config(workspace)
+    if not cfg["custom"] and purpose.startswith("verify_"):
+        reviewer = os.getenv("ALFA_REVIEW_MODEL", "google/gemma-4-26b-a4b-it")
+        if reviewer not in APPROVED_MODELS:
+            raise ModelUnavailable("The review model must be one of the approved case models.")
+        cfg["model"] = reviewer
     if not cfg["key"]:
         raise ModelUnavailable("The analysis model is not configured. Ask the workspace owner to configure the connection.")
     with DB() as db:
@@ -69,7 +74,7 @@ def complete(workspace, purpose, prompt, *, job_id="", max_tokens=4500, system=S
                     raise ModelUnavailable("The model connection was rejected. Check its API key and permissions.")
                 response.raise_for_status()
                 body = response.json()
-                tokens = int(body.get("usage", {}).get("total_tokens", 0))
+                tokens += int(body.get("usage", {}).get("total_tokens", 0))
                 choice = body["choices"][0]
                 if choice.get("finish_reason") == "length":
                     raise ValueError("The model response was truncated. Reduce the batch size.")

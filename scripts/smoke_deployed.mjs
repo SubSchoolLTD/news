@@ -19,7 +19,7 @@ try {
     const page = await context.newPage()
     page.on('pageerror', e => errors.push(e.message))
     await page.goto('https://' + host)
-    await page.getByRole('button', { name: russian ? 'Попробовать демо' : 'Explore the demo', exact: true }).waitFor()
+    await page.getByRole('button', { name: russian ? 'Открыть гостевой просмотр' : 'Explore the live tour', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: 'RU', exact: true }).count(), 0)
     assert.equal(await page.getByRole('button', { name: 'EN', exact: true }).count(), russian ? 1 : 0)
     const health = await page.request.get('https://' + host + '/api/health')
@@ -32,6 +32,34 @@ try {
     assert.equal(health.headers()['cache-control'], 'no-store')
     pass(host + ': ' + language + ' → ' + (russian ? 'RU, switch available' : 'EN, switch hidden'))
     await page.screenshot({ path: new URL(host + '-' + language + '.png', output).pathname, fullPage: true })
+    await context.close()
+  }
+
+  const jury=JSON.parse(await fs.readFile(new URL('../.local/JURY.json',import.meta.url),'utf8'))
+  for(const host of ['analytics.subschool.us','analytics.subschool.ru']){
+    const ru=host.endsWith('.ru'),base='https://'+host
+    const context=await browser.newContext({locale:'en-US',viewport:{width:1440,height:1000}}),page=await context.newPage()
+    page.on('pageerror',e=>errors.push(e.message))
+    await page.goto(base+'/login')
+    await page.getByLabel(ru?'Рабочая почта':'Work email',{exact:true}).fill(jury.email)
+    await page.getByLabel(ru?'Пароль':'Password',{exact:true}).fill(jury.password)
+    await page.getByRole('button',{name:ru?'Войти':'Sign in',exact:true}).click()
+    await page.getByRole('button',{name:ru?'Запустить мониторинг':'Run monitoring',exact:true}).waitFor()
+    const owner=await page.request.get(base+'/api/auth/me').then(r=>r.json())
+    const workspaces=await page.request.get(base+'/api/workspaces').then(r=>r.json())
+    assert.equal(workspaces.length,3);assert.ok(workspaces.every(w=>w.role==='owner'&&!w.demo))
+    const cookie=(await context.cookies()).find(c=>c.name==='sd_session');assert.ok(cookie.secure&&cookie.httpOnly&&cookie.sameSite==='Lax')
+    await page.goto(base);await page.getByRole('button',{name:ru?'Открыть гостевой просмотр':'Explore the live tour',exact:true}).click()
+    await page.getByRole('heading',{name:ru?'Общая картина.':'The bigger picture.',exact:true}).waitFor()
+    assert.equal(await page.getByRole('button',{name:ru?'Запустить мониторинг':'Run monitoring',exact:true}).count(),0)
+    const headers={'X-SignalDesk-Tour':'1'}
+    const tour=await page.request.get(base+'/api/workspaces',{headers}).then(r=>r.json())
+    assert.deepEqual(tour.map(w=>w.id).sort(),workspaces.map(w=>w.id).sort());assert.ok(tour.every(w=>w.role==='viewer'))
+    assert.equal((await page.request.post(base+'/api/workspaces/'+tour[0].id+'/analyze',{headers})).status(),403)
+    const stillOwner=await page.request.get(base+'/api/auth/me').then(r=>r.json());assert.equal(stillOwner.id,owner.id)
+    const guest=(await context.cookies()).find(c=>c.name==='sd_guest');assert.ok(guest.secure&&guest.httpOnly)
+    await page.screenshot({path:new URL(host+'-guest.png',output).pathname,fullPage:true})
+    pass(host+': jury password login, same three real workspaces, read-only guest and preserved account session')
     await context.close()
   }
 
@@ -50,7 +78,8 @@ try {
     await page.getByLabel('Password', { exact: true }).fill(owner.password)
     await page.getByRole('button', { name: 'Sign in', exact: true }).click()
     await page.waitForURL(url => !url.pathname.endsWith('/login'))
-    assert.equal((await page.request.get(base + '/api/auth/me')).status(), 200)
+    const ownerState=await page.request.get(base+'/api/auth/me').then(r=>r.json())
+    if(!ownerState.verified){await page.getByRole('heading',{name:'Check your inbox.',exact:true}).waitFor();assert.equal((await page.request.get(base+'/api/workspaces')).status(),403)}
     const cookies = await context.cookies()
     const cookie = cookies.find(c => c.name === 'sd_session')
     assert.ok(cookie?.secure && cookie?.httpOnly && cookie?.sameSite === 'Lax')

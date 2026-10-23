@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import io
 import re
+import time
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
@@ -19,6 +21,8 @@ from .network import public_transport
 
 HEADERS = {"User-Agent": "SignalDeskBot/1.0 (+https://analytics.subschool.us; research and company-requested monitoring)", "Accept": "text/html,application/rss+xml,application/atom+xml,application/pdf;q=0.9,*/*;q=0.8"}
 MAX_BYTES = 5 * 1024 * 1024
+_robots_cache = {}
+_robots_lock = threading.Lock()
 
 
 def fetch(url: str, *, timeout=18):
@@ -111,7 +115,14 @@ def allowed_by_robots(url):
     parsed = urlsplit(url)
     robots_url = f"{parsed.scheme}://{parsed.netloc}/robots.txt"
     try:
-        data, _, _ = fetch(robots_url, timeout=8)
+        with _robots_lock:
+            cached = _robots_cache.get(robots_url)
+        if cached and time.monotonic() - cached[0] < 600:
+            data = cached[1]
+        else:
+            data, _, _ = fetch(robots_url, timeout=8)
+            with _robots_lock:
+                _robots_cache[robots_url] = (time.monotonic(), data)
         rp = RobotFileParser()
         rp.parse(data.decode("utf-8", errors="replace").splitlines())
         return rp.can_fetch("SignalDeskBot", url)
@@ -156,6 +167,9 @@ def collect_source(source):
         link, title = entry.get("link"), entry.get("title")
         if not link or not title:
             continue
+        published = parse_date(entry)
+        if published and published > datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"):
+            continue  # Scheduled/webinar dates are not already-published news.
         try:
             safe_url(link, resolve=False)
         except ValueError:
@@ -164,7 +178,7 @@ def collect_source(source):
         content = entry.get("content", [])
         if content:
             text += "\n" + BeautifulSoup(content[0].get("value", ""), "html.parser").get_text(" ", strip=True)
-        result.append({"title": BeautifulSoup(title, "html.parser").get_text(" ", strip=True)[:400], "url": canonical(link), "text": (title + "\n" + text)[:18000], "published_at": parse_date(entry), "source_id": source["id"], "source_name": source["name"], "kind": source.get("kind", "news"), "evidence_level": "feed" if len(text) > 150 else "headline"})
+        result.append({"title": BeautifulSoup(title, "html.parser").get_text(" ", strip=True)[:400], "url": canonical(link), "text": (title + "\n" + text)[:18000], "published_at": published, "source_id": source["id"], "source_name": source["name"], "kind": source.get("kind", "news"), "evidence_level": "feed" if len(text) > 150 else "headline"})
     return result
 
 
