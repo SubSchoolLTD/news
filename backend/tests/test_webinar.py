@@ -95,3 +95,33 @@ def test_related_industries_affect_candidate_ranking_with_qualified_reasons():
     _, reasons=relevance('Steel manufacturing production costs',profile)
     assert 'group member industry (transmission unconfirmed)' in reasons
     assert 'payment counterparty industry (relationship unconfirmed)' in reasons
+
+
+def test_zero_product_flag_overrides_a_false_model_approval():
+    from app.case_context import qualify_reviews
+    p={'dataset_features':{'CL_PRODUCT_DEP_MARK':'0.0'},'exposures':['Credit products / borrowing costs']}
+    draft={'article_id':'N1','en':{'why':'The company holds deposit products (CL_PRODUCT_DEP_MARK: 0.0, but general liquidity is key).'}}
+    review={'reviews':[{'article_id':'N1','supported':True,'issues':[]}]}
+    checked=qualify_reviews(p,[draft],review,{})['reviews'][0]
+    assert checked['supported'] is False and 'zero CSV flag' in checked['issues'][0]
+    assert review['reviews'][0]['supported'] is True
+    # A separate user confirmation can legitimately establish a product elsewhere.
+    p['exposures']=['Deposits / treasury liquidity']
+    assert qualify_reviews(p,[draft],review,{})['reviews'][0]['supported'] is True
+    p['exposures']=[];draft['en']['why']='The company does not hold deposit products in the supplied dataset.'
+    assert qualify_reviews(p,[draft],review,{})['reviews'][0]['supported'] is True
+
+
+def test_a_rate_hold_cannot_automatically_raise_existing_borrowing_costs():
+    from app.case_context import qualify_reviews
+    draft={'article_id':'N1','en':{'fact':'The central bank maintained its key rate at 14%.','impact':'If debt is floating-rate, the sustained rate will increase borrowing costs.'}}
+    review={'reviews':[{'article_id':'N1','supported':True,'issues':[]}]}
+    assert qualify_reviews({},[draft],review,{})['reviews'][0]['supported'] is False
+    draft['en']['impact']='If refinancing is planned, continuing high rates may keep financing costs elevated. Confirm actual loan terms first.'
+    assert qualify_reviews({},[draft],review,{})['reviews'][0]['supported'] is True
+
+
+def test_duplicate_drafts_for_one_news_item_are_not_counted_as_two_events():
+    from app.case_context import unique_news_drafts
+    rows=[{'article_id':'N1','relevance':70},{'article_id':'N1','relevance':90},{'article_id':'N2','relevance':80}]
+    assert unique_news_drafts(rows)==[rows[1],rows[2]]

@@ -108,3 +108,54 @@ def build_context(selected, companies, payments):
         if key.upper() == "REVENUE_COMPANY":
             clean[key] = revenue
     return context, clean
+
+
+def unique_news_drafts(drafts):
+    """One stored event per news/role/profile: do not count overwritten drafts."""
+    import math
+    best = {}
+    def score(draft):
+        try:
+            n = float(draft.get('relevance', 0))
+            return n if math.isfinite(n) else 0
+        except (TypeError, ValueError):
+            return 0
+    for draft in drafts if isinstance(drafts, list) else []:
+        if not isinstance(draft, dict) or not isinstance(draft.get('article_id'), str):
+            continue
+        aid = draft['article_id']
+        if aid not in best or score(draft) > score(best[aid]):best[aid] = draft
+    return list(best.values())
+
+
+def qualify_reviews(profile, drafts, review, news):
+    """Known structured contradictions override an LLM reviewer's approval."""
+    reviews = [dict(r) for r in review.get('reviews', []) if isinstance(r, dict)]
+    products = [('CL_PRODUCT_DEP_MARK', r'deposit\w*|депозит\w*', 'deposit'),
+        ('CL_PRODUCT_LOA_MARK', r'loan\w*|credit products?|кредит\w*', 'credit'),
+        ('CL_PRODUCT_LEA_MARK', r'leas\w*|лизинг\w*', 'leasing'),
+        ('FACTORING_MARK', r'factor\w*|факторинг\w*', 'factoring')]
+    for draft in drafts:
+        issues = []
+        why = ' '.join(str(draft.get(lang, {}).get('why', '')) for lang in ['en', 'ru']).lower()
+        for flag, words, label in products:
+            if number(value(profile.get('dataset_features', {}), flag)) != 0:continue
+            if re.search(words, ' '.join(profile.get('exposures', [])), re.I):continue
+            for sentence in re.split(r'[.!?]\s+', why):
+                positive = re.search(r'\b(has|holds?|uses?|have|active|existing|current|имеет|есть|использует|действующ\w*)\b.{0,100}(?:' + words + ')', sentence, re.I)
+                negative = re.search(r'\b(no|not|without|нет|не)\b.{0,35}(?:' + words + ')', sentence, re.I)
+                if positive and not negative:
+                    issues.append(f'The company-relevance statement asserts an existing {label} product despite its explicit zero CSV flag. Treat it as unobserved, not a company fact.')
+                    break
+        source = news.get(draft.get('article_id'), {})
+        fact = str(draft.get('en', {}).get('fact', ''))
+        impact = str(draft.get('en', {}).get('impact', ''))
+        hold = re.search(r'(maintain\w*|unchanged|hold\w*|retain\w*|leave\w*).{0,65}(rate|policy)|rate.{0,40}(unchanged|maintain\w*)', source.get('title', '') + ' ' + fact, re.I)
+        increase = re.search(r'(will|would|may|could).{0,15}(increase|raise).{0,45}(borrow\w* cost|interest cost|debt payment|loan payment)', impact, re.I)
+        if hold and increase:
+            issues.append('A rate hold is not a rate increase. Describe continued elevated financing/refinancing costs; do not infer higher existing payments without a verified repricing comparator.')
+        if issues:
+            row = next((r for r in reviews if r.get('article_id') == draft.get('article_id')), None)
+            if row is None:row = {'article_id': draft.get('article_id')};reviews.append(row)
+            row.update(supported=False, issues=list(dict.fromkeys([*row.get('issues', []), *issues])))
+    return {**review, 'reviews': reviews}

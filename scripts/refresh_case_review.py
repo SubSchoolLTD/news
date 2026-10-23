@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 
 ROOT=Path(__file__).resolve().parents[1]
-p=argparse.ArgumentParser();p.add_argument('--origin',default='https://analytics.subschool.us');p.add_argument('--prepare-only',action='store_true');args=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('--origin',default='https://analytics.subschool.us');p.add_argument('--prepare-only',action='store_true');p.add_argument('--recheck',action='store_true',help='Confirm a new profile edition and regenerate review analyses');args=p.parse_args()
 if args.origin not in {'https://analytics.subschool.us','https://analytics.subschool.ru'}:
     raise ValueError('Use an owner-configured production domain.')
 companies=[];payments=[];hashes={}
@@ -43,6 +43,8 @@ with httpx.Client(base_url=args.origin,timeout=45) as client:
         if payments:call('POST',base+'/upload',files={'file':('webinar-case-payments.csv',encode(payments),'text/csv')})
         call('POST',base+'/datasets/'+cid+'/select',json={'company_id':'U_88715'})
         w=call('PUT',base+'/profile',json={'reviewed':True,'regions':[],'unknowns':['Official company identity and website','Operating and customer markets','Fixed versus floating debt terms','Debt maturities and actual cash-flow sensitivity']})
+    elif args.recheck:
+        w=call('PUT',base+'/profile',json={'reviewed':True})
     results=[]
     def run(kind,data):
         job=call('POST',base+('/analyze' if kind=='analyze' else '/briefs'),**({'json':data} if kind=='brief' else {}))
