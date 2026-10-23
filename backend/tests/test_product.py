@@ -420,7 +420,7 @@ def test_assistant_withholds_unsupported_cross_market_claims(client,monkeypatch)
     def complete(w,purpose,*a,**kw):
         calls.append(purpose)
         if purpose=='verify_follow_up':return {'supported':False,'issues':['US funding is incorrectly applied to Australia']}
-        return {'answer':'ESSER expires in Australia','event_ids':[],'bank_ids':[],'follow_up':'Next?'}
+        return {'interpretation':'ESSER expires in Australia','event_ids':[],'bank_ids':[],'follow_up':'Next?'}
     monkeypatch.setattr(main.llm,'complete',complete)
     r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we report in Australia?'})
     assert r.status_code==503 and calls==['follow_up','verify_follow_up','repair_follow_up','verify_follow_up']
@@ -434,7 +434,7 @@ def test_assistant_resolves_only_workspace_evidence_aliases(client,monkeypatch):
         e=record(db,wid,'event',{'decision_role':'ceo','profile_version':1,'en':{'title':'Local reporting'},'article':{'url':'https://example.com/news','text':'Local news'}});eid=e.id;db.commit()
     def complete(w,purpose,*a,**kw):
         if purpose=='verify_follow_up':return {'supported':True,'issues':[]}
-        return {'answer':'Check the original reporting in E1.','event_ids':[],'bank_ids':[],'follow_up':'Which assumption matters?'}
+        return {'interpretation':'Check the original reporting in E1.','event_ids':[],'bank_ids':[],'follow_up':'Which assumption matters?'}
     monkeypatch.setattr(main.llm,'complete',complete)
     r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we check?'})
     assert r.status_code==200 and r.json()['event_ids']==[eid]
@@ -455,3 +455,42 @@ def test_job_trace_exposes_period_without_arbitrary_internal_inputs(client):
     j=Job(id='trace-test',workspace_id='test',kind='brief',input={'period':'week','decision_role':'cfo','internal_secret':'hidden'})
     public=job_public(j)
     assert public['input']=={'period':'week','decision_role':'cfo'}
+
+
+def test_editorial_question_does_not_pull_unrelated_bank_research(client,monkeypatch):
+    from app import main
+    register(client);wid=workspace(client)
+    with DB() as db:
+        ws=db.get(Workspace,wid);ws.profile={'industry':'Education media','regions':['Australia'],'exposures':['Reader demand']};db.commit()
+    def forbidden(*a,**k):raise AssertionError('Unrelated bank research should not be retrieved')
+    monkeypatch.setattr(main,'retrieve_bank',forbidden)
+    def complete(w,purpose,*a,**kw):
+        if purpose=='verify_follow_up':return {'supported':True,'issues':[]}
+        return {'interpretation':'No verified local article is available yet. Collect Australian reporting before choosing a topic.','event_ids':[],'bank_ids':[]}
+    monkeypatch.setattr(main.llm,'complete',complete)
+    assert client.post(f'/api/workspaces/{wid}/assistant',json={'question':'Separate the Australian source fact from one suggested editorial test.'}).status_code==200
+
+
+def test_assistant_quotes_verified_fact_with_its_publisher_not_a_new_model_fact(client,monkeypatch):
+    from app import main
+    register(client);wid=workspace(client)
+    fact='The Educator reports a Queensland school using Key Word Sign.'
+    with DB() as db:
+        record(db,wid,'event',{'decision_role':'ceo','profile_version':1,'en':{'fact':fact},'article':{'source_name':'The Educator','url':'https://example.com/queensland'}});db.commit()
+    def complete(w,purpose,*a,**kw):
+        if purpose=='verify_follow_up':return {'supported':True,'issues':[]}
+        return {'interpretation':'If readers value practical inclusion tools, this suggests an editorial opportunity.','reported_fact':'The client implemented Key Word Sign.','event_ids':['E1'],'bank_ids':[],'next_step':'Test reader interest with a short pilot article.','uncertainties':['Reader engagement is unknown.']}
+    monkeypatch.setattr(main.llm,'complete',complete)
+    result=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'Which Australian editorial test is supported?'}).json()
+    assert f'Source [1] (The Educator): {fact}' in result['answer']
+    assert 'The client implemented' not in result['answer'] and 'reported_fact' not in result
+    assert 'Suggested next step: Test reader interest' in result['answer']
+
+
+def test_malformed_assistant_structure_is_withheld_instead_of_crashing(client,monkeypatch):
+    from app import main
+    register(client);wid=workspace(client)
+    monkeypatch.setattr(main.llm,'complete',lambda *a,**k:{'interpretation':'A conditional opportunity','uncertainties':None,'event_ids':[],'bank_ids':[]})
+    r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we investigate?'})
+    assert r.status_code==503 and 'completeness' in r.json()['detail']
+    with DB() as db:assert not items(db,wid,'message')

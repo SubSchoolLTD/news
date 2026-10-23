@@ -1,4 +1,4 @@
-# SignalDesk 1.1 verification record
+# SignalDesk 1.1.1 verification record
 
 23 October 2026. Main product: [analytics.subschool.us](https://analytics.subschool.us); shared-data [RU mirror](https://analytics.subschool.ru). [Case criteria and review scenarios](CASE_CRITERIA.md).
 
@@ -12,7 +12,7 @@ Runtime synthetic demo generation and the fixed source-recommendation catalogue 
 
 ## Automated and live evidence
 
-- Backend: **45 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
+- Backend: **48 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
 - Vue/TypeScript: production type check and Vite build pass. Main bundle is about 160 kB / 60 kB gzip; charts and routes load separately.
 - Deterministic browser checks cover the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations.
 - A full real-model browser replay passed **14 groups in 250 seconds**, including actual website extraction, publisher discovery, collection, interpretation and all three brief periods, with no browser runtime errors. That baseline used Qwen for generation/checking. The final Qwen + Gemma replay also passed all **14 groups in 293 seconds**. The genuine review-workspace preparation additionally exercised the new checker.
@@ -48,7 +48,7 @@ The approved **Qwen 35B-A3B** generates interpretations. Live review found that 
 
 Events retain their original article, reviewed company snapshot/version and decision role. Briefs use 24h/7d/30d publication windows, cite actual event IDs, preserve uncertainty and undergo independent content review plus one bounded correction. Empty windows produce an explicit coverage brief. A new-signal notice identifies an older edition; failed generation unlocks retry instead of leaving the button busy. A successful retry supersedes its old failure banner.
 
-The assistant uses short evidence aliases, resolves citations server-side, checks answers independently and repairs once. The check specifically rejects applying a US-only funding program to Australia without local evidence. Honest coverage gaps and conditional reporting tests remain valid responses. Unsupported answers are withheld rather than saved as established analysis.
+The assistant uses short evidence aliases, resolves citations server-side, checks answers independently and repairs once. The check specifically rejects applying a US-only funding program to Australia without local evidence. Honest coverage gaps and conditional reporting tests remain valid responses. Unsupported answers are withheld rather than saved as established analysis. A further hands-on question exposed a publisher/client attribution error: external reporting was described as the client's own work. Version 1.1.1 supplies separately labelled source facts and company hypotheses, quotes selected verified facts directly with their publisher in the rendered answer, and asks the model for conditional interpretation, a proposed next step and unknowns. Previous assistant prose is not reused as evidence. Editorial questions avoid unrelated bank retrieval; financial questions and confirmed borrowing exposures still use the bank corpus. Regressions verify publisher-preserving fact rendering and malformed-response withholding. A real Qwen/Gemma replay returned The Educator's Australian facts separately from a proposed EduHub check.
 
 ## Genuine review dataset and limitations
 
