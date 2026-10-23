@@ -57,12 +57,14 @@ with httpx.Client(base_url=args.origin,timeout=45) as client:
             time.sleep(2)
         raise TimeoutError('The real case run did not complete.')
     version=w['profile']['version']
-    for role in ['ceo','cfo']:
-        call('PATCH',base+'/decision-role',json={'role':role})
-        existing=call('GET',base+'/events')
-        if not existing:run('analyze',{'decision_role':role})
-        assert call('GET',base+'/events'),'No verified real-case signals; do not fabricate a replacement.'
-    call('PATCH',base+'/decision-role',json={'role':'ceo'})
+    try:
+        for role in ['ceo','cfo']:
+            call('PATCH',base+'/decision-role',json={'role':role})
+            existing=call('GET',base+'/events')
+            if not existing:run('analyze',{'decision_role':role})
+            assert call('GET',base+'/events'),'No verified real-case signals; do not fabricate a replacement.'
+    finally:
+        call('PATCH',base+'/decision-role',json={'role':'ceo'})
     briefs=call('GET',base+'/briefs')
     for period in ['day','week','month']:
         if not any(b['period']==period and b.get('profile_version')==version for b in briefs):run('brief',{'period':period})

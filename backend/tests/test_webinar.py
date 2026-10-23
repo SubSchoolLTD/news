@@ -125,3 +125,31 @@ def test_duplicate_drafts_for_one_news_item_are_not_counted_as_two_events():
     from app.case_context import unique_news_drafts
     rows=[{'article_id':'N1','relevance':70},{'article_id':'N1','relevance':90},{'article_id':'N2','relevance':80}]
     assert unique_news_drafts(rows)==[rows[1],rows[2]]
+
+
+def test_structured_hold_error_gets_one_repair_before_publication(client,monkeypatch):
+    from app import pipeline
+    from app.db import Job,items
+    owner=register(client);wid=workspace(client)
+    with DB() as db:
+        w=db.get(Workspace,wid);w.onboarded=True;w.profile={'industry':'Manufacturing','exposures':['Credit products / borrowing costs'],'version':1};w.settings={'min_relevance':0}
+        record(db,wid,'article',{'title':'Central bank maintains policy rate for manufacturing financing','text':'The central bank maintained the policy rate unchanged. '*60,'published_at':now(),'url':'https://example.com/hold','evidence_level':'user_supplied'})
+        j=Job(workspace_id=wid,user_id=owner['id'],kind='analyze',input={});db.add(j);db.flush()
+        monkeypatch.setattr(pipeline,'collect_sources',lambda sources:([],[]))
+        monkeypatch.setattr(pipeline,'retrieve_bank',lambda *a,**k:[])
+        repairs=[]
+        def draft(impact):
+            lang={'title':'Financing stays elevated','fact':'The central bank maintained the policy rate unchanged.','why':'The company has credit product exposure.','impact':impact,'bank_view':'No verified bank excerpt','actions':['Confirm actual maturities and loan terms.'],'uncertainties':['Actual loan terms are unknown.']}
+            return {'article_id':'N1','relevance':85,'confidence':70,'sentiment':'risk','category':'macro','profile_features':['exposures'],'bank_ids':[],'en':dict(lang),'ru':dict(lang)}
+        def complete(w,purpose,prompt,**kw):
+            if purpose=='analysis_plan':return {'research_query':'financing','focus':['Credit products']}
+            if purpose=='interpret_events':return {'events':[draft('The unchanged rate will increase borrowing costs.')]}
+            if purpose=='verify_evidence':return {'reviews':[{'article_id':'N1','supported':True,'issues':[],'confidence_cap':90}]}
+            if purpose=='repair_interpretation':
+                repairs.append(kw['system']);return {'events':[draft('If refinancing is needed, costs may remain elevated. Confirm actual terms first.')]}
+            raise AssertionError(purpose)
+        monkeypatch.setattr(pipeline.llm,'complete',complete)
+        pipeline.run_analysis(db,j,w);db.commit()
+        assert len(repairs)==1 and "DO NOT USE 'increase borrowing costs'" in repairs[0]
+        assert j.result['events']==1 and len(items(db,wid,'event'))==1
+        assert 'remain elevated' in items(db,wid,'event')[0].payload['en']['impact']
