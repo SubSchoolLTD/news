@@ -1,4 +1,4 @@
-# SignalDesk 1.1.1 verification record
+# SignalDesk 1.1.2 verification record
 
 23 October 2026. Main product: [analytics.subschool.us](https://analytics.subschool.us); shared-data [RU mirror](https://analytics.subschool.ru). [Case criteria and review scenarios](CASE_CRITERIA.md).
 
@@ -14,7 +14,7 @@ Runtime synthetic demo generation and the fixed source-recommendation catalogue 
 
 - Backend: **48 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
 - Vue/TypeScript: production type check and Vite build pass. Main bundle is about 160 kB / 60 kB gzip; charts and routes load separately.
-- Deterministic browser checks cover the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations.
+- Deterministic browser checks passed **10 groups**, covering the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations. The final replay also checks that a case opened from the landing-page footer starts at the top, making the read-only identity immediately visible.
 - A full real-model browser replay passed **14 groups in 250 seconds**, including actual website extraction, publisher discovery, collection, interpretation and all three brief periods, with no browser runtime errors. That baseline used Qwen for generation/checking. The final Qwen + Gemma replay also passed all **14 groups in 293 seconds**. The genuine review-workspace preparation additionally exercised the new checker.
 - Public HTTPS smoke: **8 groups passed**, covering both domains, language rules, jury/owner/independent administrator sign-in, shared genuine workspaces, guest mutation restrictions, session preservation, security headers and secure cookies.
 - Manual Codex internal-browser review covers the inbox gate/direct-route block, guest restrictions, ordinary jury sign-in, genuine case evidence, EduHub sources/signals/briefs and grounded follow-up questions. Actual screenshots are documented in [DESIGN_AUDIT.md](DESIGN_AUDIT.md).

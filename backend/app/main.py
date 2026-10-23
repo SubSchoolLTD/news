@@ -136,7 +136,7 @@ async def lifespan(app):
     stop_worker()
 
 
-app = FastAPI(title="SignalDesk API", version="1.1.1", description="Evidence-grounded business news intelligence. Session authentication; every workspace operation verifies membership and role.", lifespan=lifespan)
+app = FastAPI(title="SignalDesk API", version="1.1.2", description="Evidence-grounded business news intelligence. Session authentication; every workspace operation verifies membership and role.", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -173,7 +173,7 @@ async def model_error(request, exc):
 @app.get("/api/health", tags=["System"])
 def health(db=Depends(get_db)):
     db.execute(__import__("sqlalchemy").text("SELECT 1"))
-    return {"status": "ok", "version": "1.1.1", "release": os.getenv("RELEASE_ID", "development"), "time": now()}
+    return {"status": "ok", "version": "1.1.2", "release": os.getenv("RELEASE_ID", "development"), "time": now()}
 
 
 @app.get("/api/config", tags=["System"])

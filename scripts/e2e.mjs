@@ -24,7 +24,7 @@ async function verify(p,email){const url=fixture({action:'verification_link',ema
 async function waitJob(p,kind,period){const end=Date.now()+420000;while(Date.now()<end){const rows=await p.request.get(base+'/api/workspaces/'+await wid(p)+'/jobs').then(r=>r.json());const j=rows.find(j=>j.kind===kind&&(!period||j.input.period===period));if(j?.status==='failed')throw new Error(j.error);if(j?.status==='completed')return j;await new Promise(r=>setTimeout(r,1500))}throw new Error(kind+' job timed out')}
 try{
  await page.goto(base);await visible(page.getByRole('button',{name:'Explore the live tour',exact:true}));assert.equal(await page.getByRole('button',{name:'RU',exact:true}).count(),0)
- await page.getByRole('button',{name:'Explore the live tour',exact:true}).click();await visible(page.getByRole('heading',{name:'The bigger picture.'}))
+ await page.getByRole('button',{name:'SubSchool',exact:true}).first().click();await visible(page.getByRole('heading',{name:'The bigger picture.'}));await page.waitForFunction(()=>window.scrollY<2)
  assert.equal(await page.getByRole('button',{name:'Run monitoring',exact:true}).count(),0)
  assert.equal(await page.getByRole('link',{name:'Workspace settings',exact:true}).count(),0)
  await visible(page.getByText('Read-only live tour · Real collected sources and model analysis. Sign in to run your own research.',{exact:true}))

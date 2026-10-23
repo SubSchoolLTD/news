@@ -15,6 +15,7 @@
 | Medium | One publisher monopolised the high-score batch. | Source diversity preserves other relevant publishers before filling remaining slots. Live EduHub analysis includes US and Australian evidence. |
 | Medium | A failed brief could leave generation busy; old failures remained after successful retry. | Busy state follows active jobs; a newer run supersedes the old banner. New evidence marks an older brief edition. |
 | Medium | Conditional interpretations became categorical in some summaries and assistant answers transferred US policy to Australia. | Independent approved-model checking, bounded correction, explicit geographic limitations and source-bound citations. Unsupported output is withheld. |
+| Medium | Selecting a case near the landing-page footer could retain the old scroll position and hide the new page header. | Route transitions reset to the top; browser-back restoration is retained. The browser check opens a footer case and asserts the new view starts at the top. |
 | Medium | Full jury workspaces were also visible in the public tour without a clear publication label. | Owner view identifies the published review space and links to creating a private workspace. Ordinary new workspaces are private. |
 
 ## Inspected journey
