@@ -1,0 +1,892 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import html
+import io
+import json
+import os
+import re
+import secrets
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from urllib.parse import quote, urlsplit
+
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
+from sqlalchemy import func
+
+from . import llm
+from .collect import canonical, fingerprint, read_document
+from .db import Admin, Audit, Base, DB, Item, Job, Member, Session, Usage, User, Workspace, audit, engine, get_db, items, now, pack, record, uid
+from .demo import seed_demo
+from .mail import enqueue
+from .pipeline import WRITE_ROLES, create_job, start_worker, stop_worker
+from .research import relevance, retrieve_bank, seed_research
+from .security import access, current_user, encrypt, hash_token, hasher, issue_session, password_ok, rate_limit, safe_url
+
+
+class Credentials(BaseModel):
+    email: str = Field(min_length=5, max_length=254)
+    password: str = Field(min_length=10, max_length=200)
+    name: str = Field(default="", max_length=100)
+
+
+class WorkspaceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+
+
+class URLIn(BaseModel):
+    url: str = Field(min_length=8, max_length=2000)
+
+
+class SourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+    url: str = Field(min_length=8, max_length=2000)
+    type: str = "rss"
+    kind: str = "news"
+    enabled: bool = True
+    respect_robots: bool = True
+    limit: int = Field(default=12, ge=1, le=30)
+
+
+class MaterialIn(BaseModel):
+    title: str = Field(min_length=3, max_length=400)
+    text: str = Field(min_length=60, max_length=200000)
+    url: str = Field(default="", max_length=2000)
+    kind: str = "news"
+    published_at: str | None = None
+
+
+class InviteIn(BaseModel):
+    email: str = Field(max_length=254)
+    role: str = "viewer"
+
+
+def valid_email(value):
+    value = value.strip().lower()
+    if not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", value):
+        raise HTTPException(422, "Enter a valid email address.")
+    return value
+
+
+def public_user(u):
+    return {"id": u.id, "email": u.email, "name": u.name, "verified": u.verified, "preferences": u.preferences}
+
+
+def public_settings(settings):
+    s = dict(settings)
+    c = s.get("model", {})
+    if c:
+        s["model"] = {k: v for k, v in c.items() if k != "key_encrypted"}
+        s["model"]["key_configured"] = bool(c.get("key_encrypted")) if c.get("mode") == "custom" else bool(os.getenv("ALFA_API_KEY"))
+    return s
+
+
+def ws_public(w, member):
+    return {"id": w.id, "name": w.name, "profile": w.profile, "settings": public_settings(w.settings), "onboarded": w.onboarded, "demo": w.demo, "role": member.role, "decision_role": member.decision_role, "created_at": w.created_at}
+
+
+def job_public(j):
+    return {k: getattr(j, k) for k in ["id", "workspace_id", "kind", "status", "progress", "result", "steps", "error", "created_at", "started_at", "finished_at"]}
+
+
+def base_url(request):
+    host = request.headers.get("host", "").split(":")[0]
+    if host == "analytics.subschool.ru":
+        return "https://analytics.subschool.ru"
+    return os.getenv("PUBLIC_URL", "http://localhost:5173").rstrip("/")
+
+
+def token_record(db, user, kind):
+    token = secrets.token_urlsafe(32)
+    expiry = (datetime.now(timezone.utc) + timedelta(hours=24 if kind == "verification" else 1)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    record(db, "auth", kind, {"user_id": user.id, "expires_at": expiry, "used": False}, key=hash_token(token))
+    return token
+
+
+@asynccontextmanager
+async def lifespan(app):
+    if os.getenv("APP_ENV") == "production" and (len(os.getenv("APP_SECRET", "")) < 32 or os.getenv("COOKIE_SECURE") != "true"):
+        raise RuntimeError("Production requires APP_SECRET (32+ characters) and COOKIE_SECURE=true.")
+    Base.metadata.create_all(engine)
+    with DB() as db:
+        seed_research(db)
+        email, password = os.getenv("ADMIN_EMAIL"), os.getenv("ADMIN_PASSWORD")
+        if email and password and not db.query(Admin).filter_by(email=email.lower()).first():
+            if len(password) < 14:
+                raise RuntimeError("ADMIN_PASSWORD must contain at least 14 characters.")
+            db.add(Admin(email=email.lower(), password=hasher.hash(password)))
+            db.commit()
+    if os.getenv("WORKER_ENABLED", "true") == "true":
+        start_worker()
+    yield
+    stop_worker()
+
+
+app = FastAPI(title="SignalDesk API", version="1.0.0", description="Evidence-grounded business news intelligence. Session authentication; every workspace operation verifies membership and role.", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def safety_headers(request: Request, call_next):
+    if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        origin = request.headers.get("origin")
+        allowed = set(os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(","))
+        if origin and origin not in allowed:
+            return JSONResponse({"detail": "This request origin is not permitted."}, status_code=403)
+        try:
+            if int(request.headers.get("content-length", "0")) > 12 * 1024 * 1024:
+                return JSONResponse({"detail": "Upload limit is 12 MB."}, status_code=413)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid request size."}, status_code=400)
+    response = await call_next(request)
+    response.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "strict-origin-when-cross-origin", "X-Frame-Options": "SAMEORIGIN", "X-Robots-Tag": "noindex, nofollow", "Permissions-Policy": "camera=(), microphone=(), geolocation=()"})
+    if request.url.path.startswith("/api"):
+        response.headers["Cache-Control"] = "no-store"
+    if os.getenv("APP_ENV") == "production":
+        response.headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; font-src 'self'; frame-ancestors 'self'; base-uri 'self'; form-action 'self'"
+    return response
+
+
+@app.exception_handler(ValueError)
+async def value_error(request, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=422)
+
+
+@app.exception_handler(llm.ModelUnavailable)
+async def model_error(request, exc):
+    return JSONResponse({"detail": str(exc)}, status_code=503)
+
+
+@app.get("/api/health", tags=["System"])
+def health(db=Depends(get_db)):
+    db.execute(__import__("sqlalchemy").text("SELECT 1"))
+    return {"status": "ok", "version": "1.0.0", "time": now()}
+
+
+@app.get("/api/config", tags=["System"])
+def client_config():
+    return {"approved_models": llm.APPROVED_MODELS, "email_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse", "model_configured": bool(os.getenv("ALFA_API_KEY"))}
+
+
+@app.post("/api/auth/register", tags=["Account"])
+def register(data: Credentials, request: Request, response: Response, db=Depends(get_db)):
+    rate_limit(request)
+    email = valid_email(data.email)
+    if db.query(User).filter_by(email=email).first():
+        raise HTTPException(409, "An account with this email already exists. Sign in or reset your password.")
+    user = User(email=email, name=data.name.strip() or email.split("@")[0], password=hasher.hash(data.password), preferences={"locale": "en", "email_alerts": False, "email_briefs": False})
+    db.add(user);db.flush()
+    issue_session(db, response, user.id)
+    token = token_record(db, user, "verification")
+    enqueue(db, "auth", user.email, "Welcome to SignalDesk", "<p>Your next informed decision starts here. Confirm your email to receive workspace invitations and business alerts.</p>", link=base_url(request) + "/verify?token=" + token)
+    audit(db, user.id, "account.registered")
+    db.commit()
+    return public_user(user)
+
+
+@app.post("/api/auth/login", tags=["Account"])
+def login(data: Credentials, request: Request, response: Response, db=Depends(get_db)):
+    rate_limit(request)
+    user = db.query(User).filter_by(email=data.email.strip().lower()).first()
+    if not user or user.disabled or not password_ok(user.password, data.password):
+        raise HTTPException(401, "Email or password is incorrect.")
+    issue_session(db, response, user.id)
+    audit(db, user.id, "account.signed_in")
+    db.commit()
+    return public_user(user)
+
+
+@app.post("/api/auth/logout", tags=["Account"])
+def logout(request: Request, response: Response, db=Depends(get_db)):
+    token = request.cookies.get("sd_session", "")
+    row = db.get(Session, hash_token(token))
+    if row:
+        db.delete(row);db.commit()
+    response.delete_cookie("sd_session", path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", tags=["Account"])
+def me(request: Request, db=Depends(get_db)):
+    return public_user(current_user(request, db))
+
+
+@app.patch("/api/auth/me", tags=["Account"])
+def update_me(request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user = current_user(request, db)
+    if "name" in data:
+        user.name = str(data["name"])[:100]
+    prefs = {k: v for k, v in data.get("preferences", {}).items() if k in {"locale", "email_alerts", "email_briefs", "theme"}}
+    if prefs.get("locale") not in {None, "en", "ru"}:
+        raise HTTPException(422, "Unsupported language.")
+    user.preferences = {**user.preferences, **prefs}
+    db.commit()
+    return public_user(user)
+
+
+@app.post("/api/auth/verify", tags=["Account"])
+def verify_email(request: Request, data: dict = Body(...), db=Depends(get_db)):
+    rate_limit(request, "verify", 20)
+    row = db.query(Item).filter_by(workspace_id="auth", kind="verification", key=hash_token(str(data.get("token", "")))).first()
+    if not row or row.payload.get("used") or row.payload["expires_at"] < now():
+        raise HTTPException(400, "This verification link has expired or has already been used.")
+    user = db.get(User, row.payload["user_id"])
+    user.verified = True
+    row.payload = {**row.payload, "used": True}
+    db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/auth/resend-verification", tags=["Account"])
+def resend(request: Request, db=Depends(get_db)):
+    user = current_user(request, db)
+    rate_limit(request, "resend", 3, 3600)
+    if not user.verified:
+        token = token_record(db, user, "verification")
+        enqueue(db, "auth", user.email, "Confirm your SignalDesk email", "<p>Confirm your email to activate business alerts and brief delivery.</p>", link=base_url(request) + "/verify?token=" + token)
+        db.commit()
+    return {"ok": True, "delivery_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse"}
+
+
+@app.post("/api/auth/reset-request", tags=["Account"])
+def request_reset(request: Request, data: dict = Body(...), db=Depends(get_db)):
+    rate_limit(request, "reset", 4, 3600)
+    user = db.query(User).filter_by(email=str(data.get("email", "")).strip().lower()).first()
+    if user:
+        token = token_record(db, user, "reset")
+        enqueue(db, "auth", user.email, "Reset your SignalDesk password", "<p>Use the link below to choose a new password. This link expires in one hour.</p>", link=base_url(request) + "/reset?token=" + token)
+        db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/auth/reset", tags=["Account"])
+def reset(request: Request, response: Response, data: dict = Body(...), db=Depends(get_db)):
+    rate_limit(request, "reset-confirm", 10)
+    password = str(data.get("password", ""))
+    if len(password) < 10 or len(password) > 200:
+        raise HTTPException(422, "Use a password with 10–200 characters.")
+    row = db.query(Item).filter_by(workspace_id="auth", kind="reset", key=hash_token(str(data.get("token", "")))).first()
+    if not row or row.payload.get("used") or row.payload["expires_at"] < now():
+        raise HTTPException(400, "This password reset link is invalid or expired.")
+    user = db.get(User, row.payload["user_id"])
+    user.password = hasher.hash(password)
+    row.payload = {**row.payload, "used": True}
+    db.query(Session).filter_by(user_id=user.id, realm="product").delete()
+    issue_session(db, response, user.id)
+    audit(db, user.id, "account.password_reset")
+    db.commit()
+    return public_user(user)
+
+
+@app.post("/api/demo", tags=["Demonstration"])
+def demo(request: Request, response: Response, data: dict = Body(default={}), db=Depends(get_db)):
+    rate_limit(request, "demo", 8, 3600)
+    user = User(email=f"demo-{uid()}@example.invalid", name="Demo visitor", password=hasher.hash(secrets.token_urlsafe(30)), preferences={"locale": "en", "email_alerts": False, "email_briefs": False})
+    db.add(user);db.flush()
+    ws = seed_demo(db, user, str(data.get("variant", "industrial")))
+    issue_session(db, response, user.id)
+    db.commit()
+    return {"user": public_user(user), "workspace_id": ws.id}
+
+
+@app.get("/api/workspaces", tags=["Workspaces"])
+def workspace_list(request: Request, db=Depends(get_db)):
+    user = current_user(request, db)
+    return [ws_public(db.get(Workspace, m.workspace_id), m) for m in db.query(Member).filter_by(user_id=user.id).all() if db.get(Workspace, m.workspace_id)]
+
+
+@app.post("/api/workspaces", tags=["Workspaces"])
+def workspace_create(data: WorkspaceIn, request: Request, db=Depends(get_db)):
+    user = current_user(request, db)
+    if db.query(Member).filter_by(user_id=user.id, role="owner").count() >= 10:
+        raise HTTPException(422, "You can own up to 10 workspaces.")
+    ws = Workspace(name=data.name.strip(), settings={"auto_monitor": True, "interval_minutes": 360, "alert_threshold": 80, "min_relevance": 20, "lookback_days": 30, "scheduled_briefs": ["day", "week", "month"]})
+    db.add(ws);db.flush()
+    member = Member(user_id=user.id, workspace_id=ws.id, role="owner")
+    db.add(member);db.flush()
+    audit(db, user.id, "workspace.created", ws.id)
+    db.commit()
+    return ws_public(ws, member)
+
+
+@app.get("/api/workspaces/{wid}", tags=["Workspaces"])
+def workspace_get(wid: str, request: Request, db=Depends(get_db)):
+    _, ws, member = access(request, db, wid)
+    return ws_public(ws, member)
+
+
+@app.put("/api/workspaces/{wid}/profile", tags=["Onboarding"])
+def profile_update(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, {"owner", "admin", "analyst"})
+    allowed = {"name", "website", "industry", "description", "activities", "regions", "competitors", "counterparties", "scale", "revenue", "market_position", "exposures", "priorities", "keywords", "unknowns", "evidence", "reviewed"}
+    profile = {**ws.profile, **{k: v for k, v in data.items() if k in allowed}}
+    if len(json.dumps(profile)) > 35000:
+        raise HTTPException(422, "Company profile is too large.")
+    if profile.get("website"):
+        safe_url(profile["website"])
+    if data.get("reviewed"):
+        if not profile.get("name") or not profile.get("industry") or not profile.get("exposures") or not profile.get("website"):
+            raise HTTPException(422, "Add a company website, name, industry and at least one business exposure before confirming.")
+        ws.onboarded = True
+        profile["status"] = "confirmed"
+        profile["reviewed_at"] = now()
+        profile["version"] = int(ws.profile.get("version", 0)) + 1
+    ws.profile = profile
+    ws.name = str(profile.get("name") or ws.name)[:150]
+    if "decision_role" in data:
+        if data["decision_role"] not in {"ceo", "cfo", "owner", "treasury", "accountant", "strategy"}:
+            raise HTTPException(422, "Unsupported decision role.")
+        member.decision_role = data["decision_role"]
+    if "keywords" in data:
+        ws.settings = {**ws.settings, "keywords": [str(x)[:100] for x in data["keywords"][:30]]}
+    audit(db, user.id, "company.profile_updated", wid, version=profile.get("version"), reviewed=bool(data.get("reviewed")))
+    db.commit()
+    return ws_public(ws, member)
+
+
+@app.post("/api/workspaces/{wid}/profile/discover", tags=["Onboarding"])
+def discover(wid: str, data: URLIn, request: Request, db=Depends(get_db)):
+    user, ws, _ = access(request, db, wid, WRITE_ROLES)
+    rate_limit(request, "website", 12, 3600)
+    safe_url(data.url)
+    return job_public(create_job(db, wid, user.id, "website", {"url": data.url}))
+
+
+@app.get("/api/workspaces/{wid}/source-suggestions", tags=["Sources"])
+def source_suggestions(wid: str, request: Request, db=Depends(get_db)):
+    _, ws, _ = access(request, db, wid)
+    keywords = ws.settings.get("keywords") or ws.profile.get("keywords") or [ws.profile.get("industry", ws.name)]
+    keyword = " ".join(str(x) for x in keywords[:2])
+    return [
+        {"name": "Bank of Russia · Press releases", "url": "https://www.cbr.ru/rss/RssPress", "type": "rss", "kind": "news", "reason": {"en": "Primary source for monetary policy and regulation", "ru": "Первоисточник денежной политики и регулирования"}},
+        {"name": "Company & industry · Google News", "url": "https://news.google.com/rss/search?q=" + quote(keyword) + "&hl=en-US&gl=US&ceid=US:en", "type": "rss", "kind": "news", "reason": {"en": "Discovery based on your monitoring topics", "ru": "Поиск на основе тем мониторинга"}},
+        {"name": "РИА · Экономика", "url": "https://ria.ru/export/rss2/economy/index.xml", "type": "rss", "kind": "news", "reason": {"en": "Russian macroeconomic and industry coverage", "ru": "Макроэкономика и отрасли России"}},
+    ]
+
+
+@app.get("/api/workspaces/{wid}/sources", tags=["Sources"])
+def sources(wid: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    return [pack(s) for s in items(db, wid, "source")]
+
+
+@app.post("/api/workspaces/{wid}/sources", tags=["Sources"])
+def source_add(wid: str, data: SourceIn, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, {"owner", "admin", "analyst"})
+    safe_url(data.url)
+    if data.kind not in {"news", "bank"} or data.type not in {"rss", "html"}:
+        raise HTTPException(422, "Unsupported source type.")
+    if len(items(db, wid, "source")) >= 30:
+        raise HTTPException(422, "A workspace can monitor up to 30 sources.")
+    row = record(db, wid, "source", {**data.model_dump(), "health": "not_checked"}, key=canonical(data.url))
+    audit(db, user.id, "source.added", wid, source_id=row.id)
+    db.commit()
+    return pack(row)
+
+
+@app.patch("/api/workspaces/{wid}/sources/{sid}", tags=["Sources"])
+def source_edit(wid: str, sid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, WRITE_ROLES)
+    row = db.query(Item).filter_by(id=sid, workspace_id=wid, kind="source").first()
+    if not row:
+        raise HTTPException(404, "Source not found.")
+    p = SourceIn(**{**row.payload, **data}).model_dump()
+    safe_url(p["url"])
+    row.payload = {**row.payload, **p}
+    audit(db, user.id, "source.updated", wid, source_id=sid)
+    db.commit()
+    return pack(row)
+
+
+@app.delete("/api/workspaces/{wid}/sources/{sid}", tags=["Sources"])
+def source_delete(wid: str, sid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, WRITE_ROLES)
+    row = db.query(Item).filter_by(id=sid, workspace_id=wid, kind="source").first()
+    if not row:
+        raise HTTPException(404, "Source not found.")
+    db.delete(row);audit(db, user.id, "source.deleted", wid, source_id=sid);db.commit()
+    return {"ok": True}
+
+
+@app.patch("/api/workspaces/{wid}/settings", tags=["Workspaces"])
+def settings_update(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, {"owner", "admin"})
+    allowed = {"keywords", "exclude_keywords", "auto_monitor", "interval_minutes", "alert_threshold", "min_relevance", "lookback_days", "scheduled_briefs"}
+    updates = {k: v for k, v in data.items() if k in allowed}
+    for key in ["keywords", "exclude_keywords"]:
+        if key in updates:
+            if not isinstance(updates[key], list):
+                raise HTTPException(422, "Monitoring keywords must be a list.")
+            updates[key] = [str(x)[:100].strip() for x in updates[key][:30] if str(x).strip()]
+    for key, low, high in [("interval_minutes", 30, 1440), ("alert_threshold", 0, 100), ("min_relevance", 0, 100), ("lookback_days", 1, 90)]:
+        if key in updates:
+            updates[key] = max(low, min(high, int(updates[key])))
+    if "scheduled_briefs" in updates:
+        updates["scheduled_briefs"] = [x for x in updates["scheduled_briefs"] if x in {"day", "week", "month"}]
+    ws.settings = {**ws.settings, **updates}
+    audit(db, user.id, "workspace.settings_updated", wid, fields=list(updates));db.commit()
+    return ws_public(ws, member)
+
+
+@app.post("/api/workspaces/{wid}/materials", tags=["Sources"])
+def material_add(wid: str, data: MaterialIn, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, WRITE_ROLES)
+    if data.url:
+        safe_url(data.url)
+    if data.kind not in {"news", "bank"}:
+        raise HTTPException(422, "Choose news or bank research.")
+    if data.published_at:
+        try:
+            date = datetime.fromisoformat(data.published_at.replace("Z", "+00:00"))
+            data.published_at = date.replace(tzinfo=date.tzinfo or timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        except ValueError:
+            raise HTTPException(422, "Use an ISO publication date.")
+    kind = "bank" if data.kind == "bank" else "article"
+    payload = {**data.model_dump(), "source_name": "Workspace upload", "evidence_level": "user_supplied", "uploaded_by": user.id, "user_attributed": data.kind == "bank"}
+    row = record(db, wid, kind, payload, key=data.url or fingerprint(data.title + data.text[:300]))
+    audit(db, user.id, "material.added", wid, material_id=row.id, kind=kind);db.commit()
+    return pack(row)
+
+
+@app.post("/api/workspaces/{wid}/upload", tags=["Sources"])
+async def upload(wid: str, request: Request, file: UploadFile = File(...), db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, WRITE_ROLES)
+    data = await file.read(10 * 1024 * 1024 + 1)
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(413, "Upload limit is 10 MB.")
+    name = Path(file.filename or "document.txt").name
+    if name.lower().endswith(".csv"):
+        text = data.decode("utf-8-sig")
+        sample = text[:5000]
+        delimiter = ";" if sample.count(";") > sample.count(",") else ","
+        reader = csv.DictReader(io.StringIO(text), delimiter=delimiter)
+        rows = []
+        for i, row in enumerate(reader):
+            if i >= 2000:
+                break
+            rows.append(row)
+        if not rows:
+            raise HTTPException(422, "This CSV has no data rows.")
+        kind = "client_dataset" if "SYNTHETIC_U" in rows[0] else "payment_dataset" if {"PAYER", "BENEFICIARY"}.issubset(rows[0]) else "csv_dataset"
+        row = record(db, wid, kind, {"filename": name, "rows": rows, "columns": reader.fieldnames, "row_count": len(rows), "truncated": len(rows) == 2000, "uploaded_by": user.id})
+        audit(db, user.id, "dataset.uploaded", wid, kind=kind, rows=len(rows));db.commit()
+        return {"id": row.id, "kind": kind, "row_count": len(rows), "columns": reader.fieldnames, "sample": rows[:8], "truncated": len(rows) == 2000}
+    if not name.lower().endswith((".pdf", ".txt", ".md", ".html")):
+        raise HTTPException(422, "Upload a searchable PDF, text, HTML or CSV file.")
+    doc = read_document(data, file.content_type or "text/plain", name)
+    return {"title": doc["title"] or name, "text": doc["text"], "filename": name}
+
+
+@app.get("/api/workspaces/{wid}/datasets", tags=["Onboarding"])
+def datasets(wid: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    return [{"id": r.id, "kind": r.kind, "filename": r.payload["filename"], "row_count": r.payload["row_count"], "columns": r.payload["columns"], "sample": r.payload["rows"][:20]} for r in db.query(Item).filter(Item.workspace_id == wid, Item.kind.in_(["client_dataset", "payment_dataset", "csv_dataset"])).all()]
+
+
+@app.post("/api/workspaces/{wid}/datasets/{did}/select", tags=["Onboarding"])
+def select_client(wid: str, did: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, WRITE_ROLES)
+    dataset = db.query(Item).filter_by(id=did, workspace_id=wid, kind="client_dataset").first()
+    selected = next((r for r in dataset.payload["rows"] if r.get("SYNTHETIC_U") == data.get("company_id")), None) if dataset else None
+    if not selected:
+        raise HTTPException(404, "Company ID not found in this dataset.")
+    exposures = list(ws.profile.get("exposures", []))
+    for field, exposure in [("CL_PRODUCT_LOA_MARK", "Credit products / borrowing costs"), ("CL_PRODUCT_LEA_MARK", "Leasing obligations"), ("CL_PRODUCT_DEP_MARK", "Deposits / treasury liquidity"), ("FACTORING_MARK", "Factoring / receivables financing"), ("FTS_FLAG", "Cross-border trade")]:
+        if str(selected.get(field, "")).lower() in {"1", "1.0", "true", "да", "y"}:
+            exposures.append(exposure)
+    company_id = selected["SYNTHETIC_U"]
+    linked = []
+    for payment in items(db, wid, "payment_dataset"):
+        linked += [p for p in payment.payload["rows"] if p.get("PAYER") == company_id or p.get("BENEFICIARY") == company_id]
+    ws.profile = {**ws.profile, "synthetic_company_id": company_id, "industry": selected.get("MAINOKVED_NAME", ws.profile.get("industry", "")), "okved": selected.get("MAINOKVED_CODE"), "revenue": selected.get("REVENUE_COMPANY", "Unknown"), "regions": list(filter(None, [selected.get("REGION"), selected.get("FTS_COUNTRY_NAME")])), "group_id": selected.get("GROUP_ID"), "exposures": list(dict.fromkeys(exposures)), "dataset_features": selected, "payment_connections": linked[:100], "reviewed": False}
+    audit(db, user.id, "company.dataset_selected", wid, company_id=company_id);db.commit()
+    return ws_public(ws, member)
+
+
+@app.get("/api/workspaces/{wid}/research", tags=["Sources"])
+def research(wid: str, request: Request, q: str = "", db=Depends(get_db)):
+    access(request, db, wid)
+    if q:
+        return retrieve_bank(db, q[:500], limit=8, wid=wid)
+    return [{"id": r.id, "title": r.payload["title"], "url": r.payload.get("url", ""), "published_at": r.payload.get("published_at"), "pages": r.payload.get("pages", 1), "ocr": r.payload.get("ocr", False), "preview": r.payload.get("text", "")[:800], "origin": "case_material" if r.workspace_id == "global" else "workspace_upload"} for r in items(db, "global", "bank") + items(db, wid, "bank")]
+
+
+@app.post("/api/workspaces/{wid}/analyze", tags=["Analysis"])
+def analyze(wid: str, request: Request, db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, WRITE_ROLES)
+    rate_limit(request, "analyze", 20, 3600)
+    if not ws.onboarded:
+        raise HTTPException(422, "Confirm the company profile first.")
+    audit(db, user.id, "analysis.requested", wid);db.commit()
+    return job_public(create_job(db, wid, user.id, "analyze", {"decision_role": member.decision_role}))
+
+
+@app.get("/api/workspaces/{wid}/events", tags=["Analysis"])
+def events(wid: str, request: Request, q: str = "", sentiment: str = "", category: str = "", days: int = 30, db=Depends(get_db)):
+    _, _, member = access(request, db, wid)
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, min(365, days)))).isoformat(timespec="seconds").replace("+00:00", "Z")
+    result = [pack(e) for e in items(db, wid, "event") if e.payload.get("decision_role", "ceo") == member.decision_role and (e.payload.get("published_at") or e.created_at) >= cutoff]
+    if sentiment:
+        result = [e for e in result if e.get("sentiment") == sentiment]
+    if category:
+        result = [e for e in result if e.get("category") == category]
+    if q:
+        result = [e for e in result if q.lower() in json.dumps(e, ensure_ascii=False).lower()]
+    return sorted(result, key=lambda e: e.get("relevance", 0), reverse=True)[:200]
+
+
+@app.get("/api/workspaces/{wid}/events/{eid}", tags=["Analysis"])
+def event_detail(wid: str, eid: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    row = db.query(Item).filter_by(id=eid, workspace_id=wid, kind="event").first()
+    if not row:
+        raise HTTPException(404, "Event not found.")
+    return pack(row)
+
+
+@app.post("/api/workspaces/{wid}/events/{eid}/feedback", tags=["Analysis"])
+def feedback(wid: str, eid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    if not db.query(Item).filter_by(id=eid, workspace_id=wid, kind="event").first():
+        raise HTTPException(404, "Event not found.")
+    if data.get("rating") not in {"useful", "irrelevant", "incorrect"}:
+        raise HTTPException(422, "Choose a feedback rating.")
+    record(db, wid, "feedback", {"event_id": eid, "user_id": user.id, "rating": data["rating"], "comment": str(data.get("comment", ""))[:1500]}, key=f"{eid}:{user.id}")
+    audit(db, user.id, "event.feedback", wid, event_id=eid, rating=data["rating"]);db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/workspaces/{wid}/events/{eid}/save", tags=["Analysis"])
+def save_event(wid: str, eid: str, request: Request, data: dict = Body(default={}), db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    if not db.query(Item).filter_by(id=eid, workspace_id=wid, kind="event").first():
+        raise HTTPException(404, "Event not found.")
+    row = record(db, wid, "saved", {"event_id": eid, "user_id": user.id, "saved": bool(data.get("saved", True))}, key=f"{eid}:{user.id}")
+    db.commit();return pack(row)
+
+
+@app.get("/api/workspaces/{wid}/saved", tags=["Analysis"])
+def saved(wid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    return [r.payload["event_id"] for r in items(db, wid, "saved") if r.payload.get("user_id") == user.id and r.payload.get("saved")]
+
+
+@app.get("/api/workspaces/{wid}/alerts", tags=["Notifications"])
+def alerts(wid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    return [{**pack(r), "read": user.id in r.payload.get("read_by", [])} for r in items(db, wid, "alert")][:100]
+
+
+@app.post("/api/workspaces/{wid}/alerts/read", tags=["Notifications"])
+def alerts_read(wid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    for row in items(db, wid, "alert"):
+        row.payload = {**row.payload, "read_by": list(set([*row.payload.get("read_by", []), user.id]))}
+    db.commit();return {"ok": True}
+
+
+@app.get("/api/workspaces/{wid}/briefs", tags=["Briefs"])
+def briefs(wid: str, request: Request, db=Depends(get_db)):
+    _, _, member = access(request, db, wid)
+    return [pack(r) for r in items(db, wid, "brief") if r.payload.get("decision_role", "ceo") == member.decision_role]
+
+
+@app.post("/api/workspaces/{wid}/briefs", tags=["Briefs"])
+def brief_generate(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, _, member = access(request, db, wid, WRITE_ROLES)
+    rate_limit(request, "briefs", 20, 3600)
+    if data.get("period") not in {"day", "week", "month"}:
+        raise HTTPException(422, "Choose day, week or month.")
+    return job_public(create_job(db, wid, user.id, "brief", {"period": data["period"], "decision_role": member.decision_role}))
+
+
+@app.get("/api/workspaces/{wid}/jobs", tags=["Analysis"])
+def jobs(wid: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    return [job_public(j) for j in db.query(Job).filter_by(workspace_id=wid).order_by(Job.created_at.desc()).limit(30)]
+
+
+@app.get("/api/workspaces/{wid}/jobs/{jid}", tags=["Analysis"])
+def get_job(wid: str, jid: str, request: Request, db=Depends(get_db)):
+    access(request, db, wid)
+    job = db.query(Job).filter_by(id=jid, workspace_id=wid).first()
+    if not job:
+        raise HTTPException(404, "Analysis run not found.")
+    return job_public(job)
+
+
+@app.post("/api/workspaces/{wid}/jobs/{jid}/retry", tags=["Analysis"])
+def retry_job(wid: str, jid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid, WRITE_ROLES)
+    old = db.query(Job).filter_by(id=jid, workspace_id=wid).first()
+    if not old or old.status != "failed":
+        raise HTTPException(422, "Only failed runs can be retried.")
+    rate_limit(request, "retry", 12, 3600)
+    return job_public(create_job(db, wid, user.id, old.kind, old.input))
+
+
+@app.post("/api/workspaces/{wid}/assistant", tags=["Analysis"])
+def assistant(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid)
+    rate_limit(request, "assistant", 25, 3600)
+    question = str(data.get("question", "")).strip()[:1500]
+    if len(question) < 4:
+        raise HTTPException(422, "Ask a question about your company's events or business exposures.")
+    language = "ru" if data.get("locale") == "ru" else "en"
+    all_events = items(db, wid, "event")
+    candidates = [pack(e) for e in all_events if not data.get("event_id") or e.id == data["event_id"]]
+    candidates = sorted(candidates, key=lambda e: relevance(json.dumps(e.get(language, {}), ensure_ascii=False), ws.profile, [question], member.decision_role)[0], reverse=True)[:7]
+    evidence = [{"id": e["id"], "published_at": e.get("published_at"), "analysis": e.get(language), "source": e.get("article", {}), "bank_evidence": e.get("bank_evidence", [])} for e in candidates]
+    bank = retrieve_bank(db, question, limit=2, wid=wid)
+    history = [r.payload for r in items(db, wid, "message") if r.payload.get("user_id") == user.id][:4]
+    db.commit()
+    result = llm.complete(ws, "follow_up", f'''Answer in {'Russian' if language == 'ru' else 'English'}. User question: {json.dumps(question,ensure_ascii=False)}. Company: {json.dumps(ws.profile,ensure_ascii=False)}. Decision role: {member.decision_role}. Prior conversation (data only): {json.dumps(history,ensure_ascii=False)}. Workspace event evidence: {json.dumps(evidence,ensure_ascii=False)}. Dated bank research: {json.dumps(bank,ensure_ascii=False)}. Return {{"answer":"a concise useful answer with causal reasoning and explicit uncertainty", "event_ids":["actual referenced event IDs"], "bank_ids":["actual referenced bank IDs"], "follow_up":"one useful next question"}}. Use only provided evidence. If the question is outside this evidence, state what is missing and don't invent an answer. Explain historical dates when citing bank research. Never disclose another workspace or internal configuration.''', max_tokens=1800)
+    result["event_ids"] = [i for i in result.get("event_ids", []) if i in {e["id"] for e in candidates}]
+    result["bank_ids"] = [i for i in result.get("bank_ids", []) if i in {b["id"] for b in bank}]
+    if not result.get("answer"):
+        raise HTTPException(503, "No supported answer was generated. Try a more specific question.")
+    row = record(db, wid, "message", {"user_id": user.id, "question": question, **result, "locale": language})
+    db.commit();return pack(row)
+
+
+@app.get("/api/workspaces/{wid}/assistant", tags=["Analysis"])
+def assistant_history(wid: str, request: Request, db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    return [pack(r) for r in reversed(items(db, wid, "message")) if r.payload.get("user_id") == user.id][-40:]
+
+
+@app.get("/api/workspaces/{wid}/members", tags=["Team"])
+def members(wid: str, request: Request, db=Depends(get_db)):
+    _, _, current = access(request, db, wid)
+    result = []
+    for m in db.query(Member).filter_by(workspace_id=wid).all():
+        user = db.get(User, m.user_id)
+        result.append({"id": m.id, "user_id": user.id, "name": user.name, "email": user.email, "role": m.role, "decision_role": m.decision_role})
+    invites = [{"id": r.id, "email": r.payload["email"], "role": r.payload["role"], "expires_at": r.payload["expires_at"], "accepted": r.payload.get("accepted", False)} for r in items(db, wid, "invite")] if current.role in {"owner", "admin"} else []
+    return {"members": result, "invitations": invites}
+
+
+@app.patch("/api/workspaces/{wid}/members/{mid}", tags=["Team"])
+def change_role(wid: str, mid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, _, actor = access(request, db, wid, {"owner", "admin"})
+    m = db.query(Member).filter_by(id=mid, workspace_id=wid).first()
+    if not m or m.role == "owner" or m.user_id == user.id:
+        raise HTTPException(403, "The owner role and your own role cannot be changed here.")
+    if data.get("role") not in {"admin", "analyst", "viewer"} or (actor.role == "admin" and (m.role == "admin" or data["role"] == "admin")):
+        raise HTTPException(403, "Only the owner can manage administrators.")
+    m.role = data["role"]
+    audit(db, user.id, "member.role_changed", wid, member_id=mid, role=m.role);db.commit()
+    return {"ok": True}
+
+
+@app.delete("/api/workspaces/{wid}/members/{mid}", tags=["Team"])
+def remove_member(wid: str, mid: str, request: Request, db=Depends(get_db)):
+    user, _, actor = access(request, db, wid, {"owner", "admin"})
+    m = db.query(Member).filter_by(id=mid, workspace_id=wid).first()
+    if not m:
+        raise HTTPException(404, "Member not found.")
+    if m.role == "owner" or (m.role == "admin" and actor.role != "owner") or m.user_id == user.id:
+        raise HTTPException(403, "This member cannot be removed by your role.")
+    db.delete(m);audit(db, user.id, "member.removed", wid, member_id=mid);db.commit()
+    return {"ok": True}
+
+
+@app.post("/api/workspaces/{wid}/invites", tags=["Team"])
+def invite(wid: str, data: InviteIn, request: Request, db=Depends(get_db)):
+    user, ws, actor = access(request, db, wid, {"owner", "admin"})
+    rate_limit(request, "invite", 20, 3600)
+    email = valid_email(data.email)
+    if data.role not in {"admin", "analyst", "viewer"} or (data.role == "admin" and actor.role != "owner"):
+        raise HTTPException(403, "Only the owner can invite administrators.")
+    if ws.demo:
+        raise HTTPException(422, "Create a real workspace to invite your team. Demo workspaces are personal sandboxes.")
+    if not user.verified:
+        raise HTTPException(403, "Confirm your email before inviting teammates.")
+    existing = db.query(User).filter_by(email=email).first()
+    if existing and db.query(Member).filter_by(user_id=existing.id, workspace_id=wid).first():
+        raise HTTPException(409, "This user already belongs to the workspace.")
+    token = secrets.token_urlsafe(32)
+    expiry = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(timespec="seconds").replace("+00:00", "Z")
+    row = record(db, wid, "invite", {"email": email, "role": data.role, "expires_at": expiry, "accepted": False, "invited_by": user.id}, key=hash_token(token))
+    link = base_url(request) + "/invite?token=" + token
+    enqueue(db, wid, email, f"Join {ws.name} on SignalDesk", f"<p>{html.escape(user.name)} invited you to <strong>{html.escape(ws.name)}</strong> as {html.escape(data.role)}.</p><p>This invitation expires in seven days.</p>", link=link)
+    audit(db, user.id, "member.invited", wid, role=data.role);db.commit()
+    return {"id": row.id, "invite_url": link, "delivery_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse"}
+
+
+@app.get("/api/invites/{token}", tags=["Team"])
+def invite_info(token: str, db=Depends(get_db)):
+    row = db.query(Item).filter_by(kind="invite", key=hash_token(token)).first()
+    if not row or row.payload.get("accepted") or row.payload["expires_at"] < now():
+        raise HTTPException(404, "This invitation is invalid or has expired.")
+    ws = db.get(Workspace, row.workspace_id)
+    return {"workspace": ws.name, "role": row.payload["role"], "email_hint": re.sub(r"^(.).+(@.*)$", r"\1•••\2", row.payload["email"])}
+
+
+@app.post("/api/invites/{token}/accept", tags=["Team"])
+def accept_invite(token: str, request: Request, db=Depends(get_db)):
+    user = current_user(request, db)
+    row = db.query(Item).filter_by(kind="invite", key=hash_token(token)).first()
+    if not row or row.payload.get("accepted") or row.payload["expires_at"] < now():
+        raise HTTPException(404, "This invitation is invalid or has expired.")
+    if user.email != row.payload["email"]:
+        raise HTTPException(403, "Sign in with the email address this invitation was sent to.")
+    if not db.query(Member).filter_by(user_id=user.id, workspace_id=row.workspace_id).first():
+        db.add(Member(user_id=user.id, workspace_id=row.workspace_id, role=row.payload["role"]))
+    user.verified = True  # Possession of the email-bound one-time invitation verifies that address.
+    row.payload = {**row.payload, "accepted": True}
+    audit(db, user.id, "member.joined", row.workspace_id);db.commit()
+    return {"workspace_id": row.workspace_id}
+
+
+@app.patch("/api/workspaces/{wid}/decision-role", tags=["Workspaces"])
+def decision_role(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid)
+    if data.get("role") not in {"ceo", "cfo", "owner", "treasury", "accountant", "strategy"}:
+        raise HTTPException(422, "Unsupported decision role.")
+    member.decision_role = data["role"]
+    audit(db, user.id, "member.decision_role_updated", wid, role=member.decision_role);db.commit()
+    return ws_public(ws, member)
+
+
+@app.put("/api/workspaces/{wid}/model", tags=["Models"])
+def model_config(wid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, {"owner"})
+    mode = data.get("mode", "case")
+    if mode == "case":
+        model = data.get("model", llm.APPROVED_MODELS[2])
+        if model not in llm.APPROVED_MODELS:
+            raise HTTPException(422, "Select an approved case model.")
+        cfg = {"mode": "case", "model": model}
+    elif mode == "custom":
+        base = str(data.get("base_url", ""))[:2000]
+        safe_url(base)
+        if urlsplit(base).query:
+            raise HTTPException(422, "Use a base URL without query parameters.")
+        key = str(data.get("api_key", ""))
+        old = ws.settings.get("model", {})
+        if not key and old.get("mode") != "custom":
+            raise HTTPException(422, "Enter an API key.")
+        if not data.get("model"):
+            raise HTTPException(422, "Enter a model ID.")
+        cfg = {"mode": "custom", "base_url": base, "model": str(data["model"])[:200], "key_encrypted": encrypt(key) if key else old.get("key_encrypted", "")}
+    else:
+        raise HTTPException(422, "Unsupported model connection.")
+    if ws.demo and mode == "custom":
+        raise HTTPException(422, "Create a real workspace before adding a private model connection.")
+    ws.settings = {**ws.settings, "model": cfg}
+    audit(db, user.id, "model.connection_updated", wid, mode=mode, model=cfg["model"]);db.commit()
+    return ws_public(ws, member)
+
+
+@app.post("/api/workspaces/{wid}/model/test", tags=["Models"])
+def test_model(wid: str, request: Request, db=Depends(get_db)):
+    _, ws, _ = access(request, db, wid, {"owner"})
+    rate_limit(request, "model-test", 6, 3600)
+    result = llm.complete(ws, "connection_test", 'Return {"ok":true}.', max_tokens=500)
+    return {"ok": result.get("ok") is True, "model": llm.config(ws)["model"]}
+
+
+@app.get("/api/workspaces/{wid}/export", tags=["Workspaces"])
+def export_workspace(wid: str, request: Request, db=Depends(get_db)):
+    user, ws, member = access(request, db, wid, {"owner", "admin"})
+    data = {"workspace": ws_public(ws, member), "events": [pack(r) for r in items(db, wid, "event")], "briefs": [pack(r) for r in items(db, wid, "brief")], "sources": [pack(r) for r in items(db, wid, "source")], "exported_at": now()}
+    audit(db, user.id, "workspace.exported", wid);db.commit()
+    return Response(json.dumps(data, ensure_ascii=False, indent=2), media_type="application/json", headers={"Content-Disposition": 'attachment; filename="signaldesk-export.json"'})
+
+
+# Independent administrator realm. Product accounts are never accepted by these endpoints.
+@app.post("/api/ops/login", tags=["Operations"])
+def admin_login(data: Credentials, request: Request, response: Response, db=Depends(get_db)):
+    rate_limit(request, "ops-login", 6, 900)
+    admin = db.query(Admin).filter_by(email=data.email.strip().lower()).first()
+    if not admin or not password_ok(admin.password, data.password):
+        raise HTTPException(401, "Administrator credentials are incorrect.")
+    issue_session(db, response, admin.id, "admin")
+    audit(db, admin.id, "ops.signed_in");db.commit()
+    return {"email": admin.email}
+
+
+@app.get("/api/ops/me", tags=["Operations"])
+def admin_me(request: Request, db=Depends(get_db)):
+    admin = current_user(request, db, "admin")
+    return {"email": admin.email}
+
+
+@app.post("/api/ops/logout", tags=["Operations"])
+def admin_logout(request: Request, response: Response, db=Depends(get_db)):
+    token = request.cookies.get("sd_admin", "")
+    row = db.get(Session, hash_token(token))
+    if row:
+        db.delete(row);db.commit()
+    response.delete_cookie("sd_admin", path="/api/ops")
+    return {"ok": True}
+
+
+@app.get("/api/ops/overview", tags=["Operations"])
+def admin_overview(request: Request, db=Depends(get_db)):
+    current_user(request, db, "admin")
+    recent = db.query(Job).order_by(Job.created_at.desc()).limit(100).all()
+    usage = db.query(Usage).order_by(Usage.created_at.desc()).limit(500).all()
+    feedback_rows = db.query(Item).filter_by(kind="feedback").all()
+    feedback_counts = {k: sum(r.payload.get("rating") == k for r in feedback_rows) for k in ["useful", "irrelevant", "incorrect"]}
+    events_count = db.query(Item).filter_by(kind="event").count()
+    return {"users": db.query(User).count(), "verified_users": db.query(User).filter_by(verified=True).count(), "workspaces": db.query(Workspace).count(), "live_workspaces": db.query(Workspace).filter_by(demo=False).count(), "events": events_count, "jobs": [job_public(j) for j in recent], "usage": [{k: getattr(r,k) for k in ["id","workspace_id","purpose","model","tokens","latency_ms","status","created_at"]} for r in usage], "feedback": feedback_counts, "email": {status: sum(r.payload.get("status") == status for r in db.query(Item).filter_by(kind="mail").all()) for status in ["sent","failed","pending","disabled"]}, "model_configured": bool(os.getenv("ALFA_API_KEY")), "email_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse"}
+
+
+@app.get("/api/ops/users", tags=["Operations"])
+def admin_users(request: Request, db=Depends(get_db)):
+    current_user(request, db, "admin")
+    return [{**public_user(u), "disabled": u.disabled, "created_at": u.created_at, "workspace_count": db.query(Member).filter_by(user_id=u.id).count()} for u in db.query(User).order_by(User.created_at.desc()).limit(500)]
+
+
+@app.patch("/api/ops/users/{user_id}", tags=["Operations"])
+def admin_user_update(user_id: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    admin = current_user(request, db, "admin")
+    user = db.get(User, user_id)
+    if not user:
+        raise HTTPException(404, "User not found.")
+    user.disabled = bool(data.get("disabled", False))
+    if user.disabled:
+        db.query(Session).filter_by(user_id=user.id, realm="product").delete()
+    audit(db, admin.id, "ops.user_access_updated", target_user=user.id, disabled=user.disabled);db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/ops/audit", tags=["Operations"])
+def admin_audit(request: Request, db=Depends(get_db)):
+    current_user(request, db, "admin")
+    return [{k: getattr(r,k) for k in ["id","workspace_id","actor_id","action","detail","created_at"]} for r in db.query(Audit).order_by(Audit.created_at.desc()).limit(300)]
+
+
+@app.get("/api/ops/feedback", tags=["Operations"])
+def admin_feedback(request: Request, db=Depends(get_db)):
+    current_user(request, db, "admin")
+    return [{"workspace_id": r.workspace_id, **pack(r)} for r in db.query(Item).filter_by(kind="feedback").order_by(Item.created_at.desc()).limit(200)]
+
+
+@app.get("/robots.txt", include_in_schema=False)
+def robots():
+    return PlainTextResponse("User-agent: *\nDisallow: /\n")
+
+
+static_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"
+if static_dir.exists() and (static_dir / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=static_dir / "assets"), name="assets")
+
+
+@app.get("/{path:path}", include_in_schema=False)
+def frontend(path: str):
+    if path.startswith(("api/", ".", "data/")):
+        raise HTTPException(404, "Not found.")
+    index = static_dir / "index.html"
+    if index.exists():
+        return FileResponse(index)
+    return JSONResponse({"detail": "SignalDesk API is running. Start the frontend development server on port 5173."})
