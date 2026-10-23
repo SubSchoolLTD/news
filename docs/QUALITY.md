@@ -67,3 +67,17 @@ SendPulse OAuth and the configured sender were verified. The owner welcome/verif
 Local ignored records: `output/playwright/` (screenshots and deterministic/current results), `output/quality/live-e2e.json` (preserved live run), `output/quality/case-grounding.json` (actual case run and evidence), `output/deployed/` (public smoke), and `output/design-audit/` (original browser captures). The selected inspected design screenshots are versioned in `docs/assets/`.
 
 The product key and deployment secrets are in GitHub Actions secrets. Private owner/admin passwords are only in the ignored local handoff and server-side account hashes. They are not in this report, repository history or browser bundles.
+
+## Proposed ongoing quality process
+
+The prototype already records source diagnostics, every agent step, accepted/withheld drafts, model status/tokens/latency and user feedback. Operations exposes usage, failures and feedback. These are observation tools; the example runs above do not establish production-wide precision.
+
+Recommended operating procedure for a rollout:
+
+1. **Each working day:** inspect failed runs, source coverage, outbox failures, gateway consumption and p50/p95 latency. Investigate a sudden increase in source errors, unsupported drafts or empty briefs before lowering a relevance threshold. Separate empty coverage from a quiet market.
+2. **Each week:** an analyst and a business-domain reviewer label a sample of fresh, previously unseen news across at least manufacturing, education/services and trade, with CEO/CFO/treasury perspectives. Preserve the reviewed company profile, source text/date, model ID and release. Include ambiguous loan terms, opinion articles, stale bank reports and irrelevant foreign regulation.
+3. **Score each output:** factual support, correct company/role connection, honest geography/customer assumptions, bank-attribution accuracy, causal usefulness and actionable specificity, each on a 0–2 rubric. Mark critical factual or bank-attribution errors separately. Report precision@5 for relevance, valid-citation rate, unsupported-claim rate, bank-attribution accuracy, source coverage/age and reviewer agreement. Report both numerator and denominator; do not hide withheld outputs or empty runs.
+4. **Connect user feedback:** compare useful/not-relevant ratings by company, industry and decision role, with at least ten labelled items before drawing a segment conclusion. Inspect the reasons with the original evidence; feedback is not permission for a model to invent stronger claims.
+5. **Before model/prompt/source changes:** replay a fixed regression set plus a held-out fresh set. Require zero critical invented bank quotes or company facts in that set and compare relevance/utility to the previous release. Keep results and human labels with the release. A model may pass one scenario and fail another, so use the approved case model for this comparison.
+
+Human-labelled precision, utility and reviewer agreement are proposed rollout measurements, not already-populated dashboard statistics. The repository provides reproducible live checks and trace exports to support this process. Distributed load, off-site recovery and a statistically powered content-quality benchmark remain future production work.
