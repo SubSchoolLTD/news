@@ -7,12 +7,15 @@ export const state = reactive({
   ready: false, events: [] as any[], alerts: [] as any[], sources: [] as any[], briefs: [] as any[], jobs: [] as any[], saved: [] as string[],
   toast: '', toastError: false, selectedEvent: null as any, mobileNav: false,
   theme: localStorage.getItem('sd_theme') || 'light',
+  bankMode: sessionStorage.getItem('sd_bank_mode') === '1',
 })
 export const t = (en:string,ru:string) => state.locale === 'ru' ? ru : en
 export const l = (v:any):string => typeof v === 'object' && v !== null && !Array.isArray(v) ? v[state.locale] || v.en || v.ru || '' : Array.isArray(v) ? v.join(', ') : v ?? ''
 export const fmt = (date:string, options:Intl.DateTimeFormatOptions={month:'short',day:'numeric'}) => date ? new Intl.DateTimeFormat(state.locale === 'ru' ? 'ru-RU' : 'en-US',options).format(new Date(date)) : t('Date not reported','Дата не указана')
 export const roles = computed(()=>[{id:'ceo',label:t('Chief executive','Генеральный директор')},{id:'cfo',label:t('Finance director','Финансовый директор')},{id:'owner',label:t('Business owner','Владелец бизнеса')},{id:'treasury',label:t('Treasury','Казначейство')},{id:'accountant',label:t('Chief accountant','Главный бухгалтер')},{id:'strategy',label:t('Strategy & operations','Стратегия и операции')}])
 export const isGuest = computed(()=>!!state.user?.is_guest)
+export const visibleEvents = computed(()=>state.events.filter(e=>!e.hidden_for_me))
+export function setBankMode(enabled:boolean){state.bankMode=enabled;if(enabled)sessionStorage.setItem('sd_bank_mode','1');else sessionStorage.removeItem('sd_bank_mode')}
 export const writeAccess = computed(()=>!isGuest.value&&['owner','admin','analyst'].includes(state.workspace?.role))
 export const adminAccess = computed(()=>!isGuest.value&&['owner','admin'].includes(state.workspace?.role))
 export const activeJob = computed(()=>state.jobs.find(j=>j.status==='running')||state.jobs.find(j=>j.status==='queued'))

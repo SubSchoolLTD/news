@@ -1,6 +1,12 @@
-# SignalDesk 1.1.2 verification record
+# SignalDesk 1.2.0 verification record
 
 23 October 2026. Main product: [analytics.subschool.us](https://analytics.subschool.us); shared-data [RU mirror](https://analytics.subschool.ru). [Case criteria and review scenarios](CASE_CRITERIA.md).
+
+## Webinar clarifications in 1.2
+
+[WEBINAR_INSIGHTS.ru.md](WEBINAR_INSIGHTS.ru.md) maps the 74 organiser answers to changes and priorities. The banking prototype now keeps its shell through company switching, feed, research and briefs. Signals can be hidden/restored per account; the original evidence and other members’ views remain intact. Relevance is defined as an editorial rubric, distinct from evidence strength, probability or monetary loss. AI/model-position and non-investment-recommendation notices appear in the product, event drawer, printed/copied brief, export and analytic email.
+
+Case imports normalize 2025 RUB legal-entity revenue (1000/0/NULL unknown), exclude ambiguous duplicate IDs and inactive clients, separate servicing location and trade countries from operating markets, and retain qualified incomplete group context. Self-transfers and duplicate payment rows do not inflate external links; unknown counterparties remain unknown. Invalid amount/count rows are excluded. Search covers all imported client rows, within the declared upload limit. Changing an anonymised case client cannot silently inherit a previous public company identity. New regressions exercise these semantics, profile draft confirmation, tenant boundaries, personal reversible hiding and retained notices.
 
 ## What changed after hands-on feedback
 
@@ -12,10 +18,10 @@ Runtime synthetic demo generation and the fixed source-recommendation catalogue 
 
 ## Automated and live evidence
 
-- Backend: **48 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
+- Backend: **55 passing tests** cover tenant and role boundaries, strict email gate, cross-browser email-bound invitation continuation, separate guest/product/admin sessions, guest mutation/team/dataset restrictions, SSRF and numeric-IP pinning, credential redaction, profile versioning, stale-unknown reconciliation, real-source discovery validation/cache invalidation, stale promotional feed rejection, future-publication exclusion, record-identity protection, source diversity, unsupported event/brief/assistant withholding, bank provenance, reporting windows, schedules and mail language.
 - Vue/TypeScript: production type check and Vite build pass. Main bundle is about 160 kB / 60 kB gzip; charts and routes load separately.
-- Deterministic browser checks passed **10 groups**, covering the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations. The final replay also checks that a case opened from the landing-page footer starts at the top, making the read-only identity immediately visible.
-- A full real-model browser replay passed **14 groups in 250 seconds**, including actual website extraction, publisher discovery, collection, interpretation and all three brief periods, with no browser runtime errors. That baseline used Qwen for generation/checking. The final Qwen + Gemma replay also passed all **14 groups in 293 seconds**. The genuine review-workspace preparation additionally exercised the new checker.
+- Deterministic browser checks passed **12 groups**, covering the guest/jury boundary, evidence/bookmarks, research and trace, email verification/onboarding, invitation/viewer access, Russian mobile reflow and independent operations. The final replay also checks that a case opened from the landing-page footer starts at the top, making the read-only identity immediately visible.
+- Earlier real-model browser replays passed **14 groups in 250 seconds**, including actual website extraction, publisher discovery, collection, interpretation and all three brief periods, with no browser runtime errors. That baseline used Qwen for generation/checking. The 1.1 Qwen + Gemma replay also passed all **14 groups in 293 seconds**. The genuine review-workspace preparation additionally exercised the new checker.
 - Public HTTPS smoke: **8 groups passed**, covering both domains, language rules, jury/owner/independent administrator sign-in, shared genuine workspaces, guest mutation restrictions, session preservation, security headers and secure cookies.
 - Manual Codex internal-browser review covers the inbox gate/direct-route block, guest restrictions, ordinary jury sign-in, genuine case evidence, EduHub sources/signals/briefs and grounded follow-up questions. Actual screenshots are documented in [DESIGN_AUDIT.md](DESIGN_AUDIT.md).
 

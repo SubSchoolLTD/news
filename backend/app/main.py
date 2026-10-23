@@ -24,6 +24,7 @@ from sqlalchemy import func
 
 from . import llm
 from .collect import canonical, fingerprint, read_document
+from .case_context import build_context, client_id, company_choices, dataset_report, status, value
 from .db import Admin, Audit, Base, DB, Item, Job, Member, Session, Usage, User, Workspace, audit, engine, get_db, items, now, pack, record, uid
 from .discovery import saved_discovery
 from .mail import enqueue
@@ -136,7 +137,7 @@ async def lifespan(app):
     stop_worker()
 
 
-app = FastAPI(title="SignalDesk API", version="1.1.2", description="Evidence-grounded business news intelligence. Session authentication; every workspace operation verifies membership and role.", lifespan=lifespan)
+app = FastAPI(title="SignalDesk API", version="1.2.0", description="Evidence-grounded business news intelligence. Session authentication; every workspace operation verifies membership and role.", lifespan=lifespan)
 
 
 @app.middleware("http")
@@ -173,7 +174,7 @@ async def model_error(request, exc):
 @app.get("/api/health", tags=["System"])
 def health(db=Depends(get_db)):
     db.execute(__import__("sqlalchemy").text("SELECT 1"))
-    return {"status": "ok", "version": "1.1.2", "release": os.getenv("RELEASE_ID", "development"), "time": now()}
+    return {"status": "ok", "version": "1.2.0", "release": os.getenv("RELEASE_ID", "development"), "time": now()}
 
 
 @app.get("/api/config", tags=["System"])
@@ -376,6 +377,8 @@ def profile_update(wid: str, request: Request, data: dict = Body(...), db=Depend
         if field in data and not isinstance(data[field], str):
             raise HTTPException(422, f"{field} must be text.")
     profile = {**(ws.settings.get("profile_draft") or ws.profile), **{k: v for k, v in data.items() if k in allowed}}
+    if "regions" in data:
+        profile["regions_origin"] = "user_confirmed"
     if len(json.dumps(profile)) > 35000:
         raise HTTPException(422, "Company profile is too large.")
     if profile.get("website"):
@@ -390,7 +393,7 @@ def profile_update(wid: str, request: Request, data: dict = Body(...), db=Depend
     if data.get("reviewed"):
         # Imported anonymised case clients have no established public identity. This
         # server-owned provenance cannot be set by an ordinary profile request.
-        imported_case = bool(ws.profile.get("synthetic_company_id") and ws.profile.get("dataset_features"))
+        imported_case = bool(profile.get("synthetic_company_id") and profile.get("dataset_features"))
         if not profile.get("name") or not profile.get("industry") or not profile.get("exposures") or not (profile.get("website") or imported_case):
             raise HTTPException(422, "Add a company website, name, industry and at least one business exposure before confirming.")
         ws.onboarded = True
@@ -541,7 +544,7 @@ async def upload(wid: str, request: Request, file: UploadFile = File(...), db=De
         if not rows:
             raise HTTPException(422, "This CSV has no data rows.")
         kind = "client_dataset" if "SYNTHETIC_U" in rows[0] else "payment_dataset" if {"PAYER", "BENEFICIARY"}.issubset(rows[0]) else "csv_dataset"
-        row = record(db, wid, kind, {"filename": name, "rows": rows, "columns": reader.fieldnames, "row_count": len(rows), "truncated": len(rows) == 2000, "uploaded_by": user.id})
+        row = record(db, wid, kind, {"filename": name, "rows": rows, "columns": reader.fieldnames, "row_count": len(rows), "truncated": len(rows) == 2000, "uploaded_by": user.id, "quality": dataset_report(rows) if kind == "client_dataset" else {}})
         audit(db, user.id, "dataset.uploaded", wid, kind=kind, rows=len(rows));db.commit()
         return {"id": row.id, "kind": kind, "row_count": len(rows), "columns": reader.fieldnames, "sample": rows[:8], "truncated": len(rows) == 2000}
     if not name.lower().endswith((".pdf", ".txt", ".md", ".html")):
@@ -553,7 +556,16 @@ async def upload(wid: str, request: Request, file: UploadFile = File(...), db=De
 @app.get("/api/workspaces/{wid}/datasets", tags=["Onboarding"])
 def datasets(wid: str, request: Request, db=Depends(get_db)):
     access(request, db, wid)
-    return [{"id": r.id, "kind": r.kind, "filename": r.payload["filename"], "row_count": r.payload["row_count"], "columns": r.payload["columns"], "sample": r.payload["rows"][:20]} for r in db.query(Item).filter(Item.workspace_id == wid, Item.kind.in_(["client_dataset", "payment_dataset", "csv_dataset"])).all()]
+    return [{"id": r.id, "kind": r.kind, "filename": r.payload["filename"], "row_count": r.payload["row_count"], "columns": r.payload["columns"], "sample": r.payload["rows"][:20], "quality": dataset_report(r.payload["rows"]) if r.kind == "client_dataset" else {}, "companies": company_choices(r.payload["rows"]) if r.kind == "client_dataset" else []} for r in db.query(Item).filter(Item.workspace_id == wid, Item.kind.in_(["client_dataset", "payment_dataset", "csv_dataset"])).all()]
+
+
+@app.get("/api/workspaces/{wid}/datasets/{did}/companies", tags=["Onboarding"])
+def search_case_companies(wid: str, did: str, request: Request, q: str = "", db=Depends(get_db)):
+    access(request, db, wid)
+    dataset = db.query(Item).filter_by(id=did, workspace_id=wid, kind="client_dataset").first()
+    if not dataset:
+        raise HTTPException(404, "Dataset not found.")
+    return company_choices(dataset.payload["rows"], q[:150])
 
 
 @app.get("/api/workspaces/{wid}/case-sample/{kind}", tags=["Onboarding"])
@@ -571,18 +583,26 @@ def case_sample(wid: str, kind: str, request: Request, db=Depends(get_db)):
 def select_client(wid: str, did: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
     user, ws, member = access(request, db, wid, WRITE_ROLES)
     dataset = db.query(Item).filter_by(id=did, workspace_id=wid, kind="client_dataset").first()
-    selected = next((r for r in dataset.payload["rows"] if r.get("SYNTHETIC_U") == data.get("company_id")), None) if dataset else None
-    if not selected:
+    matches = [r for r in dataset.payload["rows"] if client_id(r) == data.get("company_id")] if dataset else []
+    if not matches:
         raise HTTPException(404, "Company ID not found in this dataset.")
-    exposures = list(ws.profile.get("exposures", []))
+    if len(matches) != 1:
+        raise HTTPException(422, "This technical company ID is duplicated. Select an unambiguous client record.")
+    selected = matches[0]
+    if status(selected) in {"prospect", "closed"}:
+        raise HTTPException(422, "The banking scenario is for active clients. This record is a prospect or closed client.")
+    company_id = client_id(selected)
+    same_company = ws.profile.get("synthetic_company_id") == company_id
+    exposures = list(ws.profile.get("exposures", [])) if same_company else []
     for field, exposure in [("CL_PRODUCT_LOA_MARK", "Credit products / borrowing costs"), ("CL_PRODUCT_LEA_MARK", "Leasing obligations"), ("CL_PRODUCT_DEP_MARK", "Deposits / treasury liquidity"), ("FACTORING_MARK", "Factoring / receivables financing"), ("FTS_FLAG", "Cross-border trade")]:
         if str(selected.get(field, "")).lower() in {"1", "1.0", "true", "да", "y"}:
             exposures.append(exposure)
-    company_id = selected["SYNTHETIC_U"]
     linked = []
     for payment in items(db, wid, "payment_dataset"):
         linked += [p for p in payment.payload["rows"] if p.get("PAYER") == company_id or p.get("BENEFICIARY") == company_id]
-    imported = {**ws.profile, "synthetic_company_id": company_id, "industry": selected.get("MAINOKVED_NAME", ws.profile.get("industry", "")), "okved": selected.get("MAINOKVED_CODE"), "revenue": selected.get("REVENUE_COMPANY", "Unknown"), "regions": list(filter(None, [selected.get("REGION"), selected.get("FTS_COUNTRY_NAME")])), "group_id": selected.get("GROUP_ID"), "exposures": list(dict.fromkeys(exposures)), "dataset_features": selected, "payment_connections": linked[:100], "reviewed": False}
+    context, clean = build_context(selected, dataset.payload["rows"], linked)
+    base = ws.profile if same_company else {"name": "Case client " + company_id, "website": "", "activities": [value(selected, "MAINOKVED_NAME")], "customers": [], "priorities": [], "keywords": [], "unknowns": ["Official company identity and website", "Operating and customer markets", "Debt terms and maturities"]}
+    imported = {**base, "synthetic_company_id": company_id, "industry": value(selected, "MAINOKVED_NAME") or ws.profile.get("industry", ""), "okved": value(selected, "MAINOKVED_CODE"), "revenue": context["revenue"]["amount"] if context["revenue"]["amount"] is not None else "Unknown", "regions": ws.profile.get("regions", []) if same_company and ws.profile.get("regions_origin") == "user_confirmed" else [], "group_id": context["group"]["id"], "exposures": list(dict.fromkeys(exposures)), "dataset_features": clean, "case_context": context, "payment_connections": context["payments"]["external_links"], "reviewed": False}
     if ws.onboarded:
         ws.settings = {**ws.settings, "profile_draft": imported}
     else:
@@ -611,7 +631,7 @@ def analyze(wid: str, request: Request, db=Depends(get_db)):
 
 @app.get("/api/workspaces/{wid}/events", tags=["Analysis"])
 def events(wid: str, request: Request, q: str = "", sentiment: str = "", category: str = "", days: int = 30, db=Depends(get_db)):
-    _, ws, member = access(request, db, wid)
+    user, ws, member = access(request, db, wid)
     cutoff = (datetime.now(timezone.utc) - timedelta(days=max(1, min(365, days)))).isoformat(timespec="seconds").replace("+00:00", "Z")
     result = [pack(e) for e in items(db, wid, "event") if e.payload.get("decision_role", "ceo") == member.decision_role and e.payload.get("profile_version", 1) == ws.profile.get("version", 1) and cutoff <= (e.payload.get("published_at") or e.created_at) <= now()]
     if sentiment:
@@ -620,7 +640,21 @@ def events(wid: str, request: Request, q: str = "", sentiment: str = "", categor
         result = [e for e in result if e.get("category") == category]
     if q:
         result = [e for e in result if q.lower() in json.dumps(e, ensure_ascii=False).lower()]
-    return sorted(result, key=lambda e: e.get("relevance", 0), reverse=True)[:200]
+    hidden = {r.payload["event_id"] for r in items(db, wid, "event_visibility") if r.payload.get("user_id") == user.id and r.payload.get("hidden")}
+    return [{**e, "hidden_for_me": e["id"] in hidden} for e in sorted(result, key=lambda e: e.get("relevance", 0), reverse=True)[:200]]
+
+
+@app.post("/api/workspaces/{wid}/events/{eid}/visibility", tags=["Analysis"])
+def event_visibility(wid: str, eid: str, request: Request, data: dict = Body(...), db=Depends(get_db)):
+    user, _, _ = access(request, db, wid)
+    if not db.query(Item).filter_by(id=eid, workspace_id=wid, kind="event").first():
+        raise HTTPException(404, "Event not found.")
+    if not isinstance(data.get("hidden"), bool):
+        raise HTTPException(422, "Specify whether this signal is hidden.")
+    record(db, wid, "event_visibility", {"event_id": eid, "user_id": user.id, "hidden": data["hidden"]}, key=f"{eid}:{user.id}")
+    audit(db, user.id, "event.hidden" if data["hidden"] else "event.restored", wid, event_id=eid)
+    db.commit()
+    return {"event_id": eid, "hidden": data["hidden"]}
 
 
 @app.get("/api/workspaces/{wid}/events/{eid}", tags=["Analysis"])
@@ -927,7 +961,7 @@ def test_model(wid: str, request: Request, db=Depends(get_db)):
 @app.get("/api/workspaces/{wid}/export", tags=["Workspaces"])
 def export_workspace(wid: str, request: Request, db=Depends(get_db)):
     user, ws, member = access(request, db, wid, {"owner", "admin"})
-    data = {"workspace": ws_public(ws, member), "events": [pack(r) for r in items(db, wid, "event")], "briefs": [pack(r) for r in items(db, wid, "brief")], "sources": [pack(r) for r in items(db, wid, "source")], "exported_at": now()}
+    data = {"analysis_notice": {"en": "AI-generated decision support. Model interpretations are not the bank’s official position. Not an individual investment recommendation.", "ru": "Аналитика подготовлена с помощью ИИ. Выводы модели не являются официальной позицией банка. Не является индивидуальной инвестиционной рекомендацией."}, "workspace": ws_public(ws, member), "events": [pack(r) for r in items(db, wid, "event")], "briefs": [pack(r) for r in items(db, wid, "brief")], "sources": [pack(r) for r in items(db, wid, "source")], "exported_at": now()}
     audit(db, user.id, "workspace.exported", wid);db.commit()
     return Response(json.dumps(data, ensure_ascii=False, indent=2), media_type="application/json", headers={"Content-Disposition": 'attachment; filename="signaldesk-export.json"'})
 

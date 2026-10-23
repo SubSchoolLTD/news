@@ -19,6 +19,9 @@ def template(title, body, button_label="Open SignalDesk", button_url=None, local
 def enqueue(db, wid, to, subject, body, *, link=None, locale="en", key=None):
     if key and db.query(Item).filter_by(workspace_id=wid, kind="mail", key=key).first():
         return
+    if key and str(key).startswith(("alert:", "brief:")):
+        notice = "Аналитика подготовлена с помощью ИИ. Выводы модели не являются официальной позицией банка. Не является индивидуальной инвестиционной рекомендацией." if locale == "ru" else "AI-generated decision support. Model interpretations are not the bank’s official position. Not an individual investment recommendation."
+        body += "<p style='font-size:12px;color:#77717e'>" + html.escape(notice) + "</p>"
     record(db, wid, "mail", {"to": to, "subject": subject, "html": template(subject, body, button_label="Открыть SignalDesk" if locale == "ru" else "Open SignalDesk", button_url=link, locale=locale), "status": "pending", "attempts": 0, "next_attempt": now()}, key=key)
 
 

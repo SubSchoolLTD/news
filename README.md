@@ -143,3 +143,5 @@ The remote deployment script builds a tagged image, takes a consistent SQLite ba
 Health: `/api/health` · API schema: `/openapi.json` · interactive API: `/docs`. User and admin interfaces are no-indexed. On restarts, interrupted analyses become explicit failures that can be retried, not silently published partial insights.
 
 For a private hackathon repository, the owner must grant the designated jury account `alfa-hack-2026` access before submission. Record the final release tag/commit when submitting. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for components, services, models, case data and simulated integration boundaries.
+
+Webinar clarifications and 1.2 priorities: [docs/WEBINAR_INSIGHTS.ru.md](docs/WEBINAR_INSIGHTS.ru.md). Recommended jury entry: [Alfa-Business section](https://analytics.subschool.us/alfa-business).

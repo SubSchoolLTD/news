@@ -9,6 +9,7 @@ import csv,json,sys,secrets,re
 from app.db import Base,DB,User,Member,Workspace,Item,Job,Usage,engine,items,record,now
 from app.pipeline import process_job,period_bounds
 from app.research import seed_research
+from app.case_context import build_context
 from app.security import hasher
 from app.collect import collect_source
 args=json.load(sys.stdin);Base.metadata.create_all(engine)
@@ -43,9 +44,10 @@ for variant,url in ([] if args.get('export_only') else [('subschool','https://su
     p['context_origin']='Public company website. Evaluation priorities are stated assumptions; no private financials or customer contracts are inferred.'
     w.profile=p;w.name=p['name'];w.onboarded=True;w.settings={**w.settings,'keywords':p.get('keywords',[])};db.commit()
   else:
-   r=next(csv.DictReader((ROOT/'data/demo_clients.csv').open()))
+   case_rows=list(csv.DictReader((ROOT/'data/demo_clients.csv').open()));r=case_rows[0]
+   case_context,normalized=build_context(r,case_rows,list(csv.DictReader((ROOT/'data/demo_payments.csv').open())))
    with DB() as db:
-    w=db.get(Workspace,wid);p={'name':'Case client '+r['SYNTHETIC_U'],'synthetic_company_id':r['SYNTHETIC_U'],'website':'','industry':r['MAINOKVED_NAME'],'activities':[r['MAINOKVED_NAME']],'regions':[r['REGION']],'revenue':r['REVENUE_COMPANY'],'group_id':r['GROUP_ID'],'dataset_features':r,'exposures':['Credit products / borrowing costs','Leasing obligations'],'priorities':['Preserve operating liquidity','Assess refinancing risk'],'unknowns':['Official company identity and website','Fixed versus floating debt terms','Debt maturities and actual cash-flow sensitivity'],'reviewed':True,'version':1,'status':'confirmed','reviewed_at':now(),'context_origin':'Actual anonymised case data. Company identity/website is not established. Evaluation priorities are scenario assumptions.'}
+    w=db.get(Workspace,wid);p={'name':'Case client '+r['SYNTHETIC_U'],'synthetic_company_id':r['SYNTHETIC_U'],'website':'','industry':r['MAINOKVED_NAME'],'activities':[r['MAINOKVED_NAME']],'regions':[],'revenue':case_context['revenue']['amount'] if case_context['revenue']['amount'] is not None else 'Unknown','group_id':r['GROUP_ID'],'dataset_features':normalized,'case_context':case_context,'payment_connections':case_context['payments']['external_links'],'exposures':['Credit products / borrowing costs','Leasing obligations'],'priorities':['Preserve operating liquidity','Assess refinancing risk'],'unknowns':['Official company identity and website','Fixed versus floating debt terms','Debt maturities and actual cash-flow sensitivity'],'reviewed':True,'version':1,'status':'confirmed','reviewed_at':now(),'context_origin':'Actual anonymised case data. Company identity/website is not established. Evaluation priorities are scenario assumptions.'}
     w.profile=p;w.name=p['name'];w.onboarded=True;w.settings={**w.settings,'keywords':['ключевая ставка','кредиты','инфляция','промышленность','лизинг']};db.commit()
  with DB() as db:
   w=db.get(Workspace,wid)

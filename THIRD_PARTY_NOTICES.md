@@ -46,7 +46,9 @@ The owner supplied the case PDF and API instructions. The PDF linked these resou
 
 - The public tour reads actual collected publications and approved-model analyses in owner-selected review workspaces. A password-authenticated jury account accesses the same data with working product permissions.
 - Synthetic company/event generators are test fixtures only (`backend/tests/fixtures.py`), excluded from the production image. Earlier release demo records retain their labels in persisted databases; the current tour cannot access those legacy synthetic workspaces.
-- `/alfa-business` illustrates a persistent integration entry using the genuine product summary. It does not claim bank-account, balance, payment, banking SSO or transaction connectivity.
+- `/alfa-business` provides an interactive banking prototype with a persistent shell across company selection, insight feed, research and briefs, using genuine product data. It does not claim bank-account, balance, payment, banking SSO or transaction connectivity.
 - Source discovery uses GDELT DOC 2.0 (https://blog.gdeltproject.org/gdelt-doc-2-0-api-debuts/), DuckDuckGo public HTML search and MediaWiki's public API (https://www.mediawiki.org/wiki/API:Search). Public publisher leads are inspected and verified; no search challenges are bypassed. Publisher robots policies apply. Headlines, dates and original URLs are retained as evidence, not claimed as original reporting by SignalDesk.
 - Email delivery is disabled in development/CI and suppressed for synthetic test addresses. Production uses the real SendPulse integration.
 - There is no simulated result used as a fallback for a failed live analysis. Failed or unsupported analysis is shown as such.
+
+The owner also supplied the 74-item webinar Q&A Markdown. Its field semantics inform CSV normalization, qualified payment/group context and analysis attribution. It does not supply a numerical scoring rubric. The accompanying video was not separately transcribed.

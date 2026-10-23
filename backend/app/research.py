@@ -43,11 +43,19 @@ def expand(text):
 
 def relevance(text, profile, keywords=None, decision_role="ceo"):
     focus = " ".join(str(profile.get(k, "")) for k in ["name", "industry", "description", "activities", "customers", "regions", "competitors", "counterparties", "priorities", "exposures"])
+    context = profile.get("case_context", {})
+    group_industries = " ".join(m.get("industry", "") for m in context.get("group", {}).get("members", []))
+    payment_industries = " ".join(link.get("industry", "") for link in context.get("payments", {}).get("external_links", []) if link.get("profile_available"))
+    focus += " " + group_industries + " " + payment_industries + " " + " ".join(context.get("trade_countries", []))
     query = expand(focus + " " + " ".join(keywords or []))
     ts = set(tokens(text))
     common = ts & query
     reasons = []
     score = min(65, len(common) * 4)
+    if group_industries and ts & expand(group_industries):
+        reasons.append("group member industry (transmission unconfirmed)")
+    if payment_industries and ts & expand(payment_industries):
+        reasons.append("payment counterparty industry (relationship unconfirmed)")
     for field, label in [("industry", "industry"), ("exposures", "business exposures"), ("priorities", "strategic priorities"), ("regions", "operating regions"), ("counterparties", "counterparties")]:
         matches = ts & expand(str(profile.get(field, "")))
         if matches:
