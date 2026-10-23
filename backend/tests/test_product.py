@@ -218,6 +218,27 @@ def test_russian_registration_and_reset_email_locale(client):
         assert len(mail)==2 and all('lang="ru"' in m.payload['html'] for m in mail)
 
 
+def test_brief_schedules_are_independent_of_automatic_collection(client,monkeypatch):
+    import app.pipeline as pipeline
+    class MondayFirst(datetime):
+        @classmethod
+        def now(cls,tz=None):
+            return cls(2026,6,1,8,tzinfo=timezone.utc)
+    monkeypatch.setattr(pipeline,'datetime',MondayFirst)
+    owner=register(client);wid=workspace(client)
+    with DB() as db:
+        ws=db.get(Workspace,wid);ws.onboarded=True
+        ws.settings={**ws.settings,'auto_monitor':False,'scheduled_briefs':['day','week','month']}
+        u=User(email='treasury@example.invalid',name='Treasury',password='unused');db.add(u);db.flush()
+        db.add(Member(workspace_id=wid,user_id=u.id,role='viewer',decision_role='cfo'));db.commit()
+        pipeline.scheduler_tick(db)
+        jobs=db.query(Job).filter_by(workspace_id=wid).all()
+        assert len(jobs)==6 and all(j.kind=='brief' for j in jobs)
+        assert {(j.input['period'],j.input['decision_role']) for j in jobs}=={(p,r) for p in ['day','week','month'] for r in ['ceo','cfo']}
+        pipeline.scheduler_tick(db)
+        assert db.query(Job).filter_by(workspace_id=wid).count()==6
+
+
 def test_public_socket_connects_only_to_validated_numeric_ip(monkeypatch):
     import socket,httpcore
     from app.network import PublicNetworkBackend

@@ -6,7 +6,7 @@ Reviewed on 23 October 2026. The product is deployed at [analytics.subschool.us]
 
 | Check | Result | Scope |
 |---|---|---|
-| Python backend | **29 passed** | Sessions, separate admin realm, tenant and role boundaries, one-time email-bound invitations, profile approval/versioning, SSRF and numeric-IP pinning, origins, credential redaction, retrieval provenance, withheld unsupported events, period windows, citation validation, scheduled empty briefs and email language. |
+| Python backend | **30 passed** | Sessions, separate admin realm, tenant and role boundaries, one-time email-bound invitations, profile approval/versioning, SSRF and numeric-IP pinning, origins, credential redaction, retrieval provenance, withheld unsupported events, period windows, citation validation, independent brief schedules, scheduled empty briefs and email language. |
 | Vue/TypeScript production build | **Passed** | Type check and Vite build, lazy route chunks. Main bundle approximately 157 kB / 59 kB gzip; charts load separately. |
 | Deterministic Playwright | **8 groups passed** | Demo, evidence, bookmarks, notifications, research/trace, RU mobile, onboarding, invites/viewer restrictions, independent operations. Runs in CI without a paid model. |
 | Live Playwright | **13 groups passed, 141 seconds** | Approved Qwen, daily/weekly/monthly brief generation, grounded conversation, actual website extraction, live source collection, RAG/interpretation/verification, team UI and operations. No browser runtime errors or horizontal overflow. |

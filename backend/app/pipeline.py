@@ -335,11 +335,9 @@ def scheduler_tick(db):
     utc = datetime.now(timezone.utc)
     for workspace in db.query(Workspace).filter_by(onboarded=True, demo=False).all():
         settings = workspace.settings
-        if not settings.get("auto_monitor", True):
-            continue
         last = settings.get("last_scheduled", "")
         interval = max(30, int(settings.get("interval_minutes", 360)))
-        if not last or (utc - datetime.fromisoformat(last.replace("Z", "+00:00"))).total_seconds() >= interval * 60:
+        if settings.get("auto_monitor", True) and (not last or (utc - datetime.fromisoformat(last.replace("Z", "+00:00"))).total_seconds() >= interval * 60):
             owner = db.query(Member).filter_by(workspace_id=workspace.id, role="owner").first()
             if owner:
                 for decision_role in {m.decision_role for m in db.query(Member).filter_by(workspace_id=workspace.id).all()}:
