@@ -44,3 +44,11 @@ Screenshots of the earlier 1.0 audit remain in the repository history and `outpu
 ## Limits
 
 The audit covers the observed journeys and viewports. Keyboard semantics and reflow are tested, but no formal screen-reader/device lab or WCAG certification is claimed. Generated language can still need correction; source fidelity, applicability and evidence gaps matter more than a polished but unsupported answer. The underlying content-quality and operational follow-up process is recorded in [QUALITY.md](QUALITY.md).
+
+## Webinar follow-up, version 1.2
+
+A fresh native-browser capture of `/alfa-business` showed that the old integration entry left the banking context and rendered a single preview in an unnecessarily narrow two-column slot. The revised journey keeps the banking identity through company selection, the signal feed and event analysis. The preview uses available width. A labelled company selector works with the browser accessibility tree; automated replay also covers bank home, briefs and switching.
+
+The event review exposed percent notation for an editorial relevance score. Cards, drawer, alerts, landing preview and attention threshold now use points out of 100; expandable definitions distinguish relevance, source support, probability and financial impact. Facts credit the source, conditional impact is marked as AI interpretation, the bank section is labelled as an AI summary or missing coverage, and the non-investment-recommendation notice is retained.
+
+Fresh captures and the three-step report are under `output/revision-audit/webinar/`. The review is scoped to the observed bank home → EduHub feed → source/conditional-impact drawer; it is not a screen-reader certification. The framework was Product Design audit; the capture surface was Codex’s internal browser, with actual published data.
