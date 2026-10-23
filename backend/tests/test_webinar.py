@@ -36,7 +36,7 @@ def test_case_import_is_a_reviewed_draft_without_false_identity_or_market(client
     register(client);wid=workspace(client)
     with DB() as db:
         w=db.get(Workspace,wid);w.onboarded=True;w.profile={'name':'Real website company','website':'https://example.com','industry':'Education','regions':['Australia'],'exposures':['Technology'],'version':1}
-        rows=[{'SYNTHETIC_U':'U1','CL_TYPE':'CLIENT','MAINOKVED_NAME':'Manufacturing','REVENUE_COMPANY':'1000','REGION':'Москва','CL_PRODUCT_LOA_MARK':'1'}]
+        rows=[{'SYNTHETIC_U':'U1','CL_TYPE':'CLIENT','MAINOKVED_NAME':'Manufacturing','REVENUE_COMPANY':'1000','REGION':'Москва','CL_PRODUCT_LOA_MARK':'1'},{'SYNTHETIC_U':'UNKNOWN','CL_TYPE':'CLIENT'}]
         r=record(db,wid,'client_dataset',{'rows':rows,'filename':'clients.csv','columns':list(rows[0]),'row_count':1});did=r.id;db.commit()
     data=client.post(f'/api/workspaces/{wid}/datasets/{did}/select',json={'company_id':'U1'}).json()
     assert data['profile']['name']=='Real website company'
@@ -48,6 +48,8 @@ def test_case_import_is_a_reviewed_draft_without_false_identity_or_market(client
     assert confirmed.json()['profile']['version']==2 and confirmed.json()['profile']['regions']==['Turkey']
     repeated=client.post(f'/api/workspaces/{wid}/datasets/{did}/select',json={'company_id':'U1'}).json()
     assert repeated['draft_profile']['regions']==['Turkey']
+    unknown=client.post(f'/api/workspaces/{wid}/datasets/{did}/select',json={'company_id':'UNKNOWN'}).json()['draft_profile']
+    assert unknown['industry']=='' and unknown['website']=='' and unknown['regions']==[]
 
 
 def test_import_rejects_duplicate_and_inactive_and_requires_tenant_access(client):
