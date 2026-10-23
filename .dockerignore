@@ -13,3 +13,4 @@ playwright-report
 .DS_Store
 
 backend/tests
+backend/app/demo.py

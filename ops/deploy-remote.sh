@@ -10,10 +10,12 @@ if sudo docker inspect signaldesk_app >/dev/null 2>&1; then
   sudo docker exec signaldesk_app python /app/ops/backup.py || true
 fi
 previous=$(cat .release 2>/dev/null || true)
+# Archive uploads overwrite tracked files but can retain removed legacy code.
+rm -f backend/app/demo.py
 sudo env RELEASE_ID="$RELEASE_ID" docker compose build --pull app
 sudo env RELEASE_ID="$RELEASE_ID" docker compose up -d --no-deps app
 for attempt in $(seq 1 40); do
-  if sudo docker exec signaldesk_app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" >/dev/null 2>&1; then
+  if sudo docker exec signaldesk_app python -c "import urllib.request; from pathlib import Path; assert not Path('/app/backend/app/demo.py').exists(); assert not Path('/app/backend/tests').exists(); urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4)" >/dev/null 2>&1; then
     printf '%s\n' "${RELEASE_ID:-manual}" > .release
     printf '%s\n' "${previous}" > .previous-release
     exit 0
