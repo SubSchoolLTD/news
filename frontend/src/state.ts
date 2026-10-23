@@ -19,7 +19,7 @@ export const activeJob = computed(()=>state.jobs.find(j=>j.status==='running')||
 export function notify(message:string,error=false){state.toast=message;state.toastError=error;setTimeout(()=>{if(state.toast===message)state.toast=''},6500)}
 export async function api(path:string,options:any={}){
   const {body,...rest}=options
-  const headers:any={...options.headers}
+  const headers:any={'Accept-Language':state.locale,...options.headers}
   let content=body
   if(body && !(body instanceof FormData)){headers['Content-Type']='application/json';content=JSON.stringify(body)}
   const res=await fetch('/api'+path,{...rest,body:content,headers,credentials:'same-origin'})

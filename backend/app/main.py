@@ -80,6 +80,10 @@ def public_user(u):
     return {"id": u.id, "email": u.email, "name": u.name, "verified": u.verified, "preferences": u.preferences}
 
 
+def request_locale(request):
+    return "ru" if request.headers.get("accept-language", "en").lower().startswith("ru") else "en"
+
+
 def public_settings(settings):
     s = dict(settings)
     s.pop("profile_draft", None)
@@ -182,11 +186,12 @@ def register(data: Credentials, request: Request, response: Response, db=Depends
     email = valid_email(data.email)
     if db.query(User).filter_by(email=email).first():
         raise HTTPException(409, "An account with this email already exists. Sign in or reset your password.")
-    user = User(email=email, name=data.name.strip() or email.split("@")[0], password=hasher.hash(data.password), preferences={"locale": "en", "email_alerts": False, "email_briefs": False})
+    lang = request_locale(request)
+    user = User(email=email, name=data.name.strip() or email.split("@")[0], password=hasher.hash(data.password), preferences={"locale": lang, "email_alerts": False, "email_briefs": False})
     db.add(user);db.flush()
     issue_session(db, response, user.id)
     token = token_record(db, user, "verification")
-    enqueue(db, "auth", user.email, "Welcome to SignalDesk", "<p>Your next informed decision starts here. Confirm your email to receive workspace invitations and business alerts.</p>", link=base_url(request) + "/verify?token=" + token)
+    enqueue(db, "auth", user.email, "Добро пожаловать в SignalDesk" if lang == "ru" else "Welcome to SignalDesk", "<p>Подтвердите почту, чтобы получать приглашения в рабочие пространства, важные события и сводки.</p>" if lang == "ru" else "<p>Your next informed decision starts here. Confirm your email to receive workspace invitations and business alerts.</p>", link=base_url(request) + "/verify?token=" + token, locale=lang)
     audit(db, user.id, "account.registered")
     db.commit()
     return public_user(user)
@@ -251,7 +256,8 @@ def resend(request: Request, db=Depends(get_db)):
     rate_limit(request, "resend", 3, 3600)
     if not user.verified:
         token = token_record(db, user, "verification")
-        enqueue(db, "auth", user.email, "Confirm your SignalDesk email", "<p>Confirm your email to activate business alerts and brief delivery.</p>", link=base_url(request) + "/verify?token=" + token)
+        lang = user.preferences.get("locale", "en")
+        enqueue(db, "auth", user.email, "Подтвердите почту SignalDesk" if lang == "ru" else "Confirm your SignalDesk email", "<p>Подтвердите почту, чтобы получать важные события и сводки.</p>" if lang == "ru" else "<p>Confirm your email to activate business alerts and brief delivery.</p>", link=base_url(request) + "/verify?token=" + token, locale=lang)
         db.commit()
     return {"ok": True, "delivery_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse"}
 
@@ -262,7 +268,8 @@ def request_reset(request: Request, data: dict = Body(...), db=Depends(get_db)):
     user = db.query(User).filter_by(email=str(data.get("email", "")).strip().lower()).first()
     if user:
         token = token_record(db, user, "reset")
-        enqueue(db, "auth", user.email, "Reset your SignalDesk password", "<p>Use the link below to choose a new password. This link expires in one hour.</p>", link=base_url(request) + "/reset?token=" + token)
+        lang = user.preferences.get("locale", "en")
+        enqueue(db, "auth", user.email, "Восстановление пароля SignalDesk" if lang == "ru" else "Reset your SignalDesk password", "<p>Перейдите по ссылке ниже, чтобы задать новый пароль. Ссылка действует один час.</p>" if lang == "ru" else "<p>Use the link below to choose a new password. This link expires in one hour.</p>", link=base_url(request) + "/reset?token=" + token, locale=lang)
         db.commit()
     return {"ok": True}
 
@@ -747,7 +754,9 @@ def invite(wid: str, data: InviteIn, request: Request, db=Depends(get_db)):
     expiry = (datetime.now(timezone.utc) + timedelta(days=7)).isoformat(timespec="seconds").replace("+00:00", "Z")
     row = record(db, wid, "invite", {"email": email, "role": data.role, "expires_at": expiry, "accepted": False, "invited_by": user.id}, key=hash_token(token))
     link = base_url(request) + "/invite?token=" + token
-    enqueue(db, wid, email, f"Join {ws.name} on SignalDesk", f"<p>{html.escape(user.name)} invited you to <strong>{html.escape(ws.name)}</strong> as {html.escape(data.role)}.</p><p>This invitation expires in seven days.</p>", link=link)
+    lang = existing.preferences.get("locale", "en") if existing else request_locale(request)
+    translated_role = {"admin": "администратор", "analyst": "аналитик", "viewer": "наблюдатель"}[data.role]
+    enqueue(db, wid, email, f"Приглашение в {ws.name} · SignalDesk" if lang == "ru" else f"Join {ws.name} on SignalDesk", f"<p>{html.escape(user.name)} приглашает вас в <strong>{html.escape(ws.name)}</strong>. Ваша роль: {translated_role}.</p><p>Приглашение действует семь дней.</p>" if lang == "ru" else f"<p>{html.escape(user.name)} invited you to <strong>{html.escape(ws.name)}</strong> as {html.escape(data.role)}.</p><p>This invitation expires in seven days.</p>", link=link, locale=lang)
     audit(db, user.id, "member.invited", wid, role=data.role);db.commit()
     return {"id": row.id, "invite_url": link, "delivery_enabled": os.getenv("EMAIL_DELIVERY") == "sendpulse"}
 

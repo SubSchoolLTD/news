@@ -53,7 +53,7 @@ Open `http://127.0.0.1:5173`. For this Mac checkout, generated frontend dependen
 | `ALFA_BASE_URL` | Default `https://changellenge.up.railway.app/v1`. |
 | `ALFA_FALLBACK_URL` | Network fallback `https://api.alfahack-gateway26.ru/v1`. |
 | `ALFA_MODEL` | Default `qwen/qwen3.6-35b-a3b`. |
-| `MODEL_DAILY_TOKEN_LIMIT` | Local global token guard in addition to the upstream shared budget; default 240,000. |
+| `MODEL_DAILY_TOKEN_LIMIT` | Local global token guard in addition to the upstream shared budget; default 1,500,000. |
 | `DATABASE_URL` | SQLite by default. Production points at `/data/signaldesk.sqlite`. |
 | `PUBLIC_URL`, `ALLOWED_ORIGINS` | Public links and the exact allowed browser origins. |
 | `COOKIE_SECURE`, `APP_ENV` | Production requires secure cookies and a strong application secret. |
@@ -115,6 +115,9 @@ npm exec --prefix frontend -- playwright install chromium
 node scripts/e2e.mjs
 # Optional paid live-model and real-source checks, using the server-side case key:
 RUN_LIVE_E2E=true node scripts/e2e.mjs
+PYTHONPATH=backend .venv/bin/python scripts/evaluate_case.py
+# Public deployment and locale/authentication smoke check:
+node scripts/smoke_deployed.mjs
 ```
 
 The deterministic tests cover session separation, cross-tenant access, role restrictions, invitations, SSRF including DNS rebinding, origin checks, private-key redaction, profile approval/versioning, evidence rejection, bank page provenance, brief windows and empty periods. Browser checks exercise both companies, English/Russian rules, mobile reflow, source/trace navigation, registration/onboarding, invitation acceptance, viewer restrictions and the independent operations interface. Live mode also checks all brief periods, company website extraction, actual collection/RAG/interpretation/verification and grounded questions.

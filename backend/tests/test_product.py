@@ -194,6 +194,30 @@ def test_quiet_brief_does_not_invent_market_calm(client):
         assert 'not confirmation' in b['en']['executive_summary']
 
 
+def test_scheduled_empty_brief_emails_only_verified_opted_in_role(client):
+    owner=register(client);wid=workspace(client)
+    with DB() as db:
+        u=db.get(User,owner['id']);u.verified=True;u.preferences={'locale':'ru','email_briefs':True}
+        ws=db.get(Workspace,wid)
+        j=Job(workspace_id=wid,user_id=u.id,kind='brief',input={'period':'day','scheduled':True,'decision_role':'ceo'});db.add(j);db.commit()
+        generate_brief(db,j,ws);db.commit()
+        mail=items(db,wid,'mail')
+        assert len(mail)==1 and 'нет новых проверенных' in mail[0].payload['subject']
+        assert 'lang="ru"' in mail[0].payload['html'] and 'Открыть SignalDesk' in mail[0].payload['html']
+        j2=Job(workspace_id=wid,user_id=u.id,kind='brief',input={'period':'week','scheduled':True,'decision_role':'cfo'});db.add(j2);db.commit()
+        generate_brief(db,j2,ws);db.commit()
+        assert len(items(db,wid,'mail'))==1
+
+
+def test_russian_registration_and_reset_email_locale(client):
+    r=client.post('/api/auth/register',json={'name':'Аналитик','email':'ru@example.invalid','password':'correct-test-password-123'},headers={'Accept-Language':'ru-RU,ru;q=0.9'})
+    assert r.status_code==200 and r.json()['preferences']['locale']=='ru'
+    assert client.post('/api/auth/reset-request',json={'email':'ru@example.invalid'}).status_code==200
+    with DB() as db:
+        mail=items(db,'auth','mail')
+        assert len(mail)==2 and all('lang="ru"' in m.payload['html'] for m in mail)
+
+
 def test_public_socket_connects_only_to_validated_numeric_ip(monkeypatch):
     import socket,httpcore
     from app.network import PublicNetworkBackend

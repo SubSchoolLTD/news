@@ -49,7 +49,7 @@ def complete(workspace, purpose, prompt, *, job_id="", max_tokens=4500, system=S
         today = now()[:10]
         usage = db.query(Usage).filter(Usage.created_at >= today).all()
         total = sum(r.tokens for r in usage)
-        if total + max_tokens > int(os.getenv("MODEL_DAILY_TOKEN_LIMIT", "240000")):
+        if total + max_tokens > int(os.getenv("MODEL_DAILY_TOKEN_LIMIT", "1500000")):
             raise ModelUnavailable("The local daily token allowance has been reached. Existing research stays available; try after the next reset.")
     started, tokens, status = time.monotonic(), 0, "error"
     try:

@@ -245,6 +245,16 @@ def period_bounds(period, end=None):
     return start.isoformat(timespec="seconds").replace("+00:00", "Z"), finish.isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
+def enqueue_brief_delivery(db, job, workspace, brief, payload, role):
+    if not job.input.get("scheduled"):
+        return
+    for member in db.query(Member).filter_by(workspace_id=workspace.id).all():
+        user = db.get(User, member.user_id)
+        if user and user.verified and member.decision_role == role and user.preferences.get("email_briefs"):
+            lang = user.preferences.get("locale", "en")
+            enqueue(db, workspace.id, user.email, payload[lang]["title"], '<p>' + html.escape(payload[lang]["executive_summary"]) + '</p>', locale=lang, key=f"brief:{brief.id}:{user.id}")
+
+
 def generate_brief(db, job, workspace):
     period = job.input.get("period", "day")
     role = job.input.get("decision_role", "ceo")
@@ -255,12 +265,13 @@ def generate_brief(db, job, workspace):
     if not events:
         source_rows = items(db, workspace.id, "source")
         unhealthy = [s.payload["name"] for s in source_rows if s.payload.get("enabled") and s.payload.get("health") != "ok"]
-        payload = {"period": period, "start": start, "end": end, "event_ids": [], "decision_role": role, "event_count": 0, "source_count": 0, "risk_count": 0, "opportunity_count": 0, "job_id": job.id, "generated_at": now(), "is_demo": workspace.demo, "quiet_period": True,
+        payload = {"period": period, "start": start, "end": end, "event_ids": [], "profile_version": workspace.profile.get("version", 1), "decision_role": role, "event_count": 0, "source_count": 0, "risk_count": 0, "opportunity_count": 0, "job_id": job.id, "generated_at": now(), "is_demo": workspace.demo, "quiet_period": True,
             "en": {"title": "No new verified signals in this window", "executive_summary": f"No verified events were collected for {workspace.name} and your decision role in this reporting window. This is a statement about the available evidence, not confirmation that the market was quiet. Keep your monitoring sources current and use a longer-period brief for previously identified developments.", "themes": [], "priorities": [{"action": "Analyst: check source health and collection coverage before treating an empty window as an all-clear.", "timeframe": "Next review", "event_ids": []}], "watch_next": ["Fresh reporting linked to your confirmed business exposures.", "Source collection errors or changes in publication frequency."], "gaps": ["No new verified event evidence in the selected window."] + (["Sources needing a check: " + ", ".join(unhealthy)] if unhealthy else [])},
             "ru": {"title": "За этот период нет новых проверенных сигналов", "executive_summary": f"Для компании {workspace.name} и вашей роли за выбранный период не собрано проверенных событий. Это ограничение доступных данных, а не подтверждение спокойной ситуации на рынке. Проверьте источники и откройте сводку за более длительный период, чтобы вернуться к ранее выявленным изменениям.", "themes": [], "priorities": [{"action": "Аналитик: проверьте работу источников и полноту сбора, прежде чем считать отсутствие событий признаком отсутствия рисков.", "timeframe": "При следующем просмотре", "event_ids": []}], "watch_next": ["Новые материалы, связанные с подтверждёнными факторами влияния на бизнес.", "Ошибки сбора или изменения частоты публикаций источников."], "gaps": ["За выбранный период нет новых проверенных событий."] + (["Источники, требующие проверки: " + ", ".join(unhealthy)] if unhealthy else [])}}
         brief = record(db, workspace.id, "brief", payload)
         step(db, job, "brief_no_new_evidence", {"status": "ok", "brief_id": brief.id, "coverage_warning": True}, 100)
         job.result = {"brief_id": brief.id, "quiet_period": True}
+        enqueue_brief_delivery(db, job, workspace, brief, payload, role)
         return
     simplified = [{"id": e["id"], "published_at": e.get("published_at"), "relevance": e["relevance"], "sentiment": e["sentiment"], "en": e["en"], "ru": e["ru"]} for e in events]
     result = llm.complete(workspace, "executive_brief", f'''Write an executive {period} brief from these VERIFIED event analyses for {workspace.name}, role {role}. Window: {start} to {end}; never add events outside it. Company: {json_text(workspace.profile)}. EVENTS: {json_text(simplified)}. Return {{"en":{{"title":"an informative editorial title, max 12 words", "executive_summary":"80 words connecting developments, company consequences and priorities", "themes":[{{"title":"", "analysis":"concrete cross-event causal synthesis", "event_ids":["actual IDs"]}}], "priorities":[{{"action":"specific owner + next step", "timeframe":"", "event_ids":["actual IDs"]}}], "watch_next":["specific measurable trigger"], "gaps":["what we still do not know"]}}, "ru":{{same translated structure}}}}. At most 3 themes, 3 priorities, 3 watch_next. Day = urgent choices; week = patterns/changes between events; month = strategic scenarios and next-month agenda. No invented trend, numbers or data coverage. If few events say coverage is limited. Every theme and action must cite an event using event_ids ONLY; never print IDs in prose. Keep the official company name exactly as provided in both languages. Write idiomatic plain business Russian: use 'реестр рисков', 'денежный поток', 'условия кредитов', avoid literal translations such as 'картирование' or 'экспозиция'. Use conditional language where outcomes are uncertain. Do not call actions urgent, mandatory or immediate unless a source establishes a real deadline. Data limitations belong in gaps, never as a business theme. Distinguish dated bank research from current events.''', job_id=job.id, max_tokens=4300)
@@ -282,12 +293,7 @@ def generate_brief(db, job, workspace):
     brief = record(db, workspace.id, "brief", payload)
     step(db, job, "brief_verify", {"status": "ok", "tool": "validate_event_references", "brief_id": brief.id, "event_count": len(events)}, 100)
     job.result = {"brief_id": brief.id}
-    if job.input.get("scheduled"):
-        for member in db.query(Member).filter_by(workspace_id=workspace.id).all():
-            user = db.get(User, member.user_id)
-            if user and user.verified and member.decision_role == role and user.preferences.get("email_briefs"):
-                lang = user.preferences.get("locale", "en")
-                enqueue(db, workspace.id, user.email, result[lang]["title"], '<p>' + html.escape(result[lang]["executive_summary"]) + '</p>', locale=lang, key=f"brief:{brief.id}:{user.id}")
+    enqueue_brief_delivery(db, job, workspace, brief, payload, role)
 
 
 def process_job(job_id):

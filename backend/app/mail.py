@@ -19,7 +19,7 @@ def template(title, body, button_label="Open SignalDesk", button_url=None, local
 def enqueue(db, wid, to, subject, body, *, link=None, locale="en", key=None):
     if key and db.query(Item).filter_by(workspace_id=wid, kind="mail", key=key).first():
         return
-    record(db, wid, "mail", {"to": to, "subject": subject, "html": template(subject, body, button_url=link, locale=locale), "status": "pending", "attempts": 0, "next_attempt": now()}, key=key)
+    record(db, wid, "mail", {"to": to, "subject": subject, "html": template(subject, body, button_label="Открыть SignalDesk" if locale == "ru" else "Open SignalDesk", button_url=link, locale=locale), "status": "pending", "attempts": 0, "next_attempt": now()}, key=key)
 
 
 def deliver_pending():
