@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import json
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event
+from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint, create_engine, event, func, update
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 
@@ -141,6 +142,21 @@ DB = sessionmaker(bind=engine, expire_on_commit=False)
 def get_db():
     with DB() as db:
         yield db
+
+
+def patch_json(db, row, field, changes):
+    """Merge worker metadata without replacing preferences edited during a long run."""
+    if db.bind.dialect.name == "sqlite":
+        column = getattr(type(row), field)
+        merged = func.coalesce(column, "{}")
+        for key, value in changes.items():
+            merged = func.json_set(merged, "$." + key, func.json(json.dumps(value)))
+        db.execute(update(type(row)).where(type(row).id == row.id).values({field: merged}), execution_options={"synchronize_session": False})
+        db.refresh(row, attribute_names=[field])
+    else:
+        db.refresh(row, with_for_update=True)
+        setattr(row, field, {**getattr(row, field), **changes})
+        db.flush()
 
 
 def items(db, wid: str, kind: str):

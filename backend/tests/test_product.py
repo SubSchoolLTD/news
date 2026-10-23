@@ -143,18 +143,27 @@ def test_unsupported_ai_drafts_are_withheld(client,monkeypatch):
     owner=register(client);wid=workspace(client)
     with DB() as db:
         ws=db.get(Workspace,wid);ws.onboarded=True;ws.profile={"industry":"Steel","exposures":["steel prices"],"version":1};ws.settings={"min_relevance":0}
-        a=record(db,wid,'article',{"title":"Steel prices change","text":"Steel prices change with manufacturing demand.","published_at":now(),"url":"https://example.com/news","evidence_level":"feed"});aid=a.id
+        a=record(db,wid,'article',{"title":"Steel prices change","text":"Steel prices change with manufacturing demand.","published_at":now(),"url":"https://example.com/news","evidence_level":"user_supplied"});aid=a.id
+        source=record(db,wid,'source',{'name':'Test source','url':'https://example.com/feed','enabled':True,'type':'rss'});sid=source.id
         j=Job(workspace_id=wid,user_id=owner['id'],kind='analyze',status='running',input={});db.add(j);db.commit()
-        monkeypatch.setattr(pipeline,'collect_sources',lambda s:([],[]))
+        def collect(s):
+            assert client.patch(f'/api/workspaces/{wid}/sources/{sid}',json={'enabled':False}).status_code==200
+            return [],[{'id':sid,'status':'ok','count':0}]
+        monkeypatch.setattr(pipeline,'collect_sources',collect)
         def complete(ws,purpose,prompt,**kwargs):
             if purpose=='analysis_plan':return {"research_query":"steel prices","missing_data":[]}
-            if purpose=='interpret_events':return {"events":[{"article_id":aid,"en":{"title":"Unsupported"},"ru":{"title":"Unsupported"}}]}
+            if purpose=='interpret_events':
+                assert client.patch(f'/api/workspaces/{wid}/settings',json={'auto_monitor':False,'keywords':['updated during analysis']}).status_code==200
+                return {"events":[{"article_id":aid,"en":{"title":"Unsupported"},"ru":{"title":"Unsupported"}}]}
             return {"reviews":[{"article_id":aid,"supported":False,"issues":["Invented company debt"]}]}
         monkeypatch.setattr(pipeline.llm,'complete',complete)
         run_analysis(db,j,ws);db.commit()
         assert not items(db,wid,'event')
         assert j.result['rejected']==1
         assert any(s['name']=='adapt' for s in j.steps)
+        current=client.get(f'/api/workspaces/{wid}').json()['settings']
+        assert current['auto_monitor'] is False and current['keywords']==['updated during analysis']
+        assert client.get(f'/api/workspaces/{wid}/sources').json()[0]['enabled'] is False
 
 
 def test_brief_rejects_invented_citation_ids(client,monkeypatch):

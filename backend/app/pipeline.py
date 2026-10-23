@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 from . import llm
 from .collect import allowed_by_robots, collect_sources, fetch, fingerprint, read_document, website_profile
-from .db import DB, Item, Job, Member, User, Workspace, items, now, pack, record
+from .db import DB, Item, Job, Member, User, Workspace, items, now, pack, patch_json, record
 from .mail import deliver_pending, enqueue
 from .research import relevance, retrieve_bank, seed_research
 
@@ -66,8 +66,9 @@ def analyze_website(db, job, workspace):
     if not isinstance(profile, dict) or not profile.get("name"):
         raise ValueError("Could not extract a company name. Enter your company profile manually.")
     profile.update(website=url, evidence=[{"url": p["url"], "title": p["title"], "accessed_at": now()} for p in doc["pages"]], status="draft", reviewed=False)
+    db.refresh(workspace, attribute_names=["profile", "onboarded", "settings"])
     if workspace.onboarded:
-        workspace.settings = {**workspace.settings, "profile_draft": {**workspace.profile, **profile}}
+        patch_json(db, workspace, "settings", {"profile_draft": {**workspace.profile, **profile}})
     else:
         workspace.profile = {**workspace.profile, **profile}
         workspace.name = str(profile["name"])[:150]
@@ -98,7 +99,7 @@ def run_analysis(db, job, workspace):
     for diag in diagnostics:
         row = next((s for s in source_rows if s.id == diag["id"]), None)
         if row:
-            row.payload = {**row.payload, "last_checked": now(), "health": diag["status"], "last_count": diag["count"], "error": diag.get("error", "")}
+            patch_json(db, row, "payload", {"last_checked": now(), "health": diag["status"], "last_count": diag["count"], "error": diag.get("error", "")})
     existing = items(db, workspace.id, "article")
     seen = {r.key for r in existing}
     titles = {fingerprint(r.payload.get("title", "")) for r in existing}
@@ -232,7 +233,7 @@ Analyze ONLY the N-prefixed news inputs, never create an event from a B-prefixed
                 if user and user.verified and member.decision_role == role and user.preferences.get("email_alerts"):
                     lang = user.preferences.get("locale", "en")
                     enqueue(db, workspace.id, user.email, p[lang]["title"], f'<p>{html.escape(p[lang]["why"])}</p><p>{html.escape(p[lang]["impact"])}</p>', locale=lang, key=f"alert:{saved.id}:{user.id}")
-    workspace.settings = {**workspace.settings, "last_run": now(), "last_job_id": job.id}
+    patch_json(db, workspace, "settings", {"last_run": now(), "last_job_id": job.id})
     job.result = {"events": len(accepted), "collected": added, "rejected": len(rejected), "diagnostics": diagnostics}
 
 
@@ -342,7 +343,7 @@ def scheduler_tick(db):
             if owner:
                 for decision_role in {m.decision_role for m in db.query(Member).filter_by(workspace_id=workspace.id).all()}:
                     create_job(db, workspace.id, owner.user_id, "analyze", {"decision_role": decision_role, "scheduled": True})
-                workspace.settings = {**settings, "last_scheduled": now()}
+                patch_json(db, workspace, "settings", {"last_scheduled": now()})
                 db.commit()
         for period in settings.get("scheduled_briefs", []):
             # Daily at 07:00 UTC (10:00 Moscow); weekly Monday; monthly first day.
