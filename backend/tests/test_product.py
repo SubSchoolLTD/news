@@ -494,3 +494,28 @@ def test_malformed_assistant_structure_is_withheld_instead_of_crashing(client,mo
     r=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should we investigate?'})
     assert r.status_code==503 and 'completeness' in r.json()['detail']
     with DB() as db:assert not items(db,wid,'message')
+
+
+@pytest.mark.parametrize('supported',[True,False])
+def test_assistant_interpret_alias_still_requires_independent_evidence_review(client,monkeypatch,supported):
+    from app import main
+    register(client);wid=workspace(client)
+    fact='The central bank held its policy rate.'
+    with DB() as db:
+        record(db,wid,'event',{'decision_role':'ceo','profile_version':1,'en':{'fact':fact},'article':{'source_name':'Central bank','url':'https://example.com/rate'}});db.commit()
+    calls=[]
+    def complete(w,purpose,*a,**kw):
+        calls.append(purpose)
+        if purpose=='verify_follow_up':return {'supported':supported,'issues':[] if supported else ['Unsupported financing assumption']}
+        return {'interpret':'Refinancing costs may remain elevated.','next_step':'Check debt maturities.','uncertainties':['Contract terms are unknown.'],'event_ids':['E1'],'bank_ids':[]}
+    monkeypatch.setattr(main.llm,'complete',complete)
+    response=client.post(f'/api/workspaces/{wid}/assistant',json={'question':'What should finance verify?'})
+    assert 'verify_follow_up' in calls
+    with DB() as db:
+        if supported:
+            assert response.status_code==200 and fact in response.json()['answer']
+            assert response.json()['interpretation']=='Refinancing costs may remain elevated.'
+            assert len(items(db,wid,'message'))==1
+        else:
+            assert response.status_code==503 and calls.count('verify_follow_up')==2
+            assert not items(db,wid,'message')

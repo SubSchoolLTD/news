@@ -772,6 +772,10 @@ def assistant(wid: str, request: Request, data: dict = Body(...), db=Depends(get
     schema = '{"interpretation":"40-70 words: conditional meaning for this company; not a claim of its past actions", "next_step":"one concrete proposed test tied to a cited local fact, or empty if not useful", "uncertainties":["1-2 material unknowns, not negative claims about absent client activity"], "event_ids":["E1"], "bank_ids":["B1 only if cited"], "follow_up":"one useful next question"}'
     by_alias={e["id"]:e for e in evidence}
     def render_answer(draft):
+        # Some approved models abbreviate this field; evidence checks still run
+        # on the canonical answer before anything can be published.
+        if isinstance(draft, dict) and "interpretation" not in draft and isinstance(draft.get("interpret"), str):
+            draft = {**draft, "interpretation": draft["interpret"]}
         if not isinstance(draft,dict) or not isinstance(draft.get("interpretation"),str) or any(not isinstance(draft.get(k,[]),list) or any(not isinstance(x,str) for x in draft.get(k,[])) for k in ("event_ids","bank_ids","uncertainties")) or not isinstance(draft.get("next_step",""),str):
             raise HTTPException(503,"The answer did not pass completeness checks. Try a narrower question.")
         meaning=draft["interpretation"].strip()
