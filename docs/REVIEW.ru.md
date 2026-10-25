@@ -1,7 +1,7 @@
 # Проверка SignalDesk
 
-Продукт: https://analytics.subschool.us · Зеркало: https://analytics.subschool.ru
-Рекомендуемый сценарий для жюри: [раздел Альфа-Бизнеса](https://analytics.subschool.us/alfa-business) · Независимая админка: `/control`
+Продукт: https://analytics.subschool.ru · Зеркало: https://analytics.subschool.ru
+Рекомендуемый сценарий для жюри: [раздел Альфа-Бизнеса](https://analytics.subschool.ru/alfa-business) · Независимая админка: `/control`
 
 ## Два способа посмотреть продукт
 

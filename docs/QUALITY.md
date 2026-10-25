@@ -66,7 +66,7 @@ These reviewed runs establish reproducibility and expose specific defects; they 
 
 Both HTTPS domains use the same persisted application through main Caddy and the RU Nginx/VPN route. CI gates deployment; the deployment script also verifies that test fixtures and the legacy demo generator are absent from the runtime container. Archive-upload residue from the earlier release is explicitly removed. The current revision is returned by `/api/health`. SQLite has daily same-host backups retaining 14 snapshots. Distributed workers, off-site recovery and a device/accessibility lab remain production follow-up work.
 
-The SendPulse sender and OAuth were verified in the original release; an owner verification message was accepted by the service. Inbox delivery/read status is not claimed. Alerts/brief delivery require a verified user and explicit opt-in. No test mail was sent to an unrelated person. The repository remains private without GitHub jury access, as the owner requested after the paid-seat restriction; app jury access is separate.
+The SendPulse sender and OAuth were verified in the original release; an owner verification message was accepted by the service. Inbox delivery/read status is not claimed. Alerts/brief delivery require a verified user and explicit opt-in. No test mail was sent to an unrelated person. The owner authorised public source publication on 25 October 2026; product jury access remains a separate account.
 
 ## Ongoing quality process
 

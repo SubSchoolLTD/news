@@ -1,0 +1,48 @@
+{
+  "companies": {
+    "rows": 85525,
+    "unique_ids": 85514,
+    "ambiguous_duplicate_ids": 1,
+    "ambiguous_rows_excluded_from_segment": 12,
+    "types_by_row": {
+      "PROSPECT": 36699,
+      "CLOSE_CLIENT": 6858,
+      "CLIENT": 41968
+    },
+    "active_unique_unambiguous_rows": 41968,
+    "sentinel_1000_rows": 601,
+    "large_active_legal_entities": 102,
+    "large_active_features": {
+      "credit": 48,
+      "leasing": 67,
+      "foreign_trade": 55,
+      "credit_or_leasing": 80
+    }
+  },
+  "payments": {
+    "rows": 1380585,
+    "self_rows": 27406,
+    "rows_with_missing_counterparty_profile": 991189,
+    "total_amount_rub": "55991235586000.0",
+    "self_amount_rub": "45721727331000.0",
+    "self_amount_share_pct": 81.65872185616175
+  },
+  "sources": [
+    {
+      "name": "12H7sbLwBcpur0fKaGHPqwPwfXfgQq10b.csv",
+      "sha256": "cb48983806ce7ca0ae045a40c9627ccbe47cc72bfb54058db04df2386da4a983"
+    },
+    {
+      "name": "1zkvWkAS0kZqijD-og_0Cv3o01SoUMY_Z.csv",
+      "sha256": "30095f75bead1a1dac0d7232b0da09a326b7ef643ee3b77b36ad3b4458a1cab3"
+    },
+    {
+      "name": "1ZJCiqgY1ma4iQ1_ltabtUuaFIBkrqnOe.csv",
+      "sha256": "3d9c718e2a87304f48bbc7447607116bb8e4bd61dded70b0a1d0558f086a1b58"
+    }
+  ],
+  "method": "CLIENT only; ambiguous IDs excluded; 2025 legal-entity revenue > RUB 15bn; no group-revenue inference. Payment rows are observed transfers, not proven operational dependencies.",
+  "physical_person_links": {
+    "rows": 12514
+  }
+}
