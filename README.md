@@ -1,152 +1,242 @@
-# SignalDesk
+# SignalDesk — новостная аналитика для бизнес-решений
 
-**Personalised business news intelligence for company decision makers.**
+**Команда: SubSchool.** Решение кейса Альфа Хакатона 2026 «Новостная аналитика для принятия бизнес-решений».
 
-SignalDesk combines external reporting, a reviewed company profile and dated Alfa-Bank research to explain why an event matters, which business assumptions need checking and what the user can do next. The working prototype includes an Alfa-Business entry flow and a complete research-to-decision workflow.
+> **Для организаторов и жюри: решение размещено на нашем сервере и доступно по адресу [https://analytics.subschool.ru](https://analytics.subschool.ru). Перед проверкой, пожалуйста, активируйте API-ключ команды SubSchool на шлюзе организатора на время проверки.** Ключ уже настроен на сервере. Его активация необходима для нового анализа, формирования сводок и ответов помощника. Ранее подготовленные материалы можно просматривать независимо от доступности генерации.
 
-[Open the product](https://analytics.subschool.ru) · [Watch the 2:51 demo](https://youtu.be/gzwKJkbbmH4) · [Russian review guide](docs/REVIEW.ru.md) · [Case-data analysis](docs/CASE_ANALYSIS.ru.md)
+SignalDesk объединяет внешние новости, подтверждённый профиль компании и датированную аналитику Альфа-Банка. Сервис объясняет, почему событие важно для конкретного бизнеса, какие риски и возможности оно создаёт и что стоит проверить перед принятием решения.
 
-![The actual SignalDesk business-signal feed](docs/assets/product-overview.png)
+[Открыть решение](https://analytics.subschool.ru) · [Посмотреть демо за 2:51](https://youtu.be/gzwKJkbbmH4) · [Сценарий проверки](docs/REVIEW.ru.md) · [Аналитические основания](docs/CASE_ANALYSIS.ru.md)
 
-## Review the deployed solution
+![Персональная лента бизнес-сигналов в работающем SignalDesk](docs/assets/product-overview.png)
 
-1. Open [the Alfa-Business entry](https://analytics.subschool.ru/alfa-business). The banking shell is an interactive prototype; no banking SSO, accounts or payment execution are connected.
-2. Use the read-only live tour to inspect actual collected publications and model analyses. The separate jury login uses the same review workspaces with product permissions; credentials are shared privately.
-3. Select **Case client U_88715**, then the **CFO** decision role. Read the interest-rate event, company link, next actions and unknowns.
-4. Open the original news and the dated bank excerpt. The source fact, bank position and model interpretation are labelled separately.
-5. Inspect source collection and agent runs, generate an executive brief, or ask a follow-up question. Generation requires a signed-in, verified account and an available model budget.
-6. Switch to **EduHub** or **SubSchool** to inspect another industry/market context. Test data and deployed review data have distinct provenance.
+## Проверка развёрнутого решения
 
-## Run locally with Docker
+1. Откройте [точку входа из Альфа-Бизнеса](https://analytics.subschool.ru/alfa-business). Банковская оболочка реализована как интерактивный прототип; банковский SSO, счета и исполнение платежей не подключены.
+2. Для просмотра собранных публикаций и результатов анализа используйте гостевой доступ с правами чтения. Отдельный аккаунт жюри открывает те же проверочные пространства с полноценными правами продукта; реквизиты передаются отдельно.
+3. Выберите **Case client U_88715** и бизнес-роль **«Финансовый директор» / CFO**. Откройте событие о ключевой ставке и изучите его связь с компанией, предлагаемые действия и неизвестные условия.
+4. Перейдите к исходной новости и цитате из обзора банка. Факт из источника, позиция банка и персональная интерпретация модели представлены отдельно.
+5. Проверьте источники и шаги агента, сформируйте сводку или задайте уточняющий вопрос. Для новых генераций нужны подтверждённый аккаунт, активированный ключ команды SubSchool и доступный бюджет шлюза организатора.
+6. Переключитесь на **EduHub** или **SubSchool**, чтобы проверить другой отраслевой и географический контекст.
 
-Requirements: Git, Docker Engine/Desktop with Compose v2, and a valid organiser gateway key for live AI generation. Docker pins Python 3.14 and Node.js 24 major versions; dependencies are locked in `backend/requirements.txt` and `frontend/package-lock.json`.
+## Локальный запуск через Docker-образ
+
+Для локального развёртывания нужны **Git, Docker Engine или Docker Desktop** и доступ в интернет. Python, Node.js и зависимости приложения устанавливаются внутри образа. Для нового AI-анализа необходим действующий ключ шлюза организатора.
+
+В репозитории есть `Dockerfile`, который собирает интерфейс и backend в один запускаемый образ. В контейнере работают API, интерфейс и один обработчик фоновых заданий. Данные сохраняются в отдельном Docker-томе.
+
+### 1. Получите код и соберите образ
 
 ```bash
 git clone https://github.com/SubSchoolLTD/news.git
 cd news
+docker build --tag signaldesk:local .
+```
+
+Для воспроизведения версии прототипа из презентации можно выполнить `git checkout submission-2026-10-25` перед сборкой. История и тег этой версии сохранены в репозитории.
+
+### 2. Подготовьте конфигурацию
+
+```bash
 cp .env.example .env
 ```
 
-Set `APP_SECRET` in `.env` to a new random value, for example one generated by `python3 -c "import secrets; print(secrets.token_hex(32))"`. Set `ALFA_API_KEY` to your authorised key. Keep `.env` private.
+В файле `.env` задайте:
+
+- `ALFA_API_KEY` — предоставленный организатором ключ. Для проверки решения команды **SubSchool** предварительно активируйте её ключ на стороне организатора.
+- `APP_SECRET` — новый случайный секрет длиной не менее 32 символов. Сохраните его для последующих запусков с тем же томом данных.
+
+Сгенерировать значение `APP_SECRET` можно через уже собранный образ:
+
+```bash
+docker run --rm --entrypoint python signaldesk:local -c "import secrets; print(secrets.token_hex(32))"
+```
+
+Скопируйте полученную строку в `APP_SECRET` внутри `.env`. Сам API-ключ и файл `.env` в репозиторий не публикуются.
+
+### 3. Запустите контейнер
+
+```bash
+docker run --detach \
+  --name signaldesk-local \
+  --env-file .env \
+  --env APP_ENV=development \
+  --env DATABASE_URL=sqlite:////data/signaldesk.sqlite \
+  --env PUBLIC_URL=http://localhost:8310 \
+  --env ALLOWED_ORIGINS=http://localhost:8310 \
+  --env COOKIE_SECURE=false \
+  --publish 127.0.0.1:8310:8000 \
+  --volume signaldesk_local_data:/data \
+  signaldesk:local
+```
+
+Откройте **http://localhost:8310**. SQLite хранится в томе `signaldesk_local_data`. В свежей установке уже есть корпус из девяти аналитических материалов банка; новости для новой компании собираются при запуске мониторинга.
+
+### 4. Создайте локальный аккаунт для проверки
+
+По умолчанию локальная отправка писем отключена: `EMAIL_DELIVERY=disabled`. Чтобы пройти сценарий без настройки почтового сервиса, создайте подтверждённого локального пользователя из консоли контейнера:
+
+```bash
+docker exec -it signaldesk-local python ops/bootstrap_local_user.py --email reviewer@example.test
+```
+
+Команда предложит дважды ввести выбранный вами пароль длиной не менее 12 символов. Затем войдите с указанными email и паролем, создайте рабочее пространство и пройдите настройку компании.
+
+Эта консольная команда доступна только в окружениях `development` и `test`, не изменяет существующие аккаунты и не создаёт готовые новости или результаты анализа. В развёрнутом продукте регистрация требует подтверждения почты. Для проверки настоящей почтовой доставки настройте SendPulse и укажите `EMAIL_DELIVERY=sendpulse`.
+
+### 5. Проверьте работу и управляйте контейнером
+
+```bash
+# Готовность приложения
+curl http://localhost:8310/api/health
+
+# Журнал приложения и фоновых заданий
+docker logs --tail=100 signaldesk-local
+
+# Остановка и повторный запуск с теми же данными
+docker stop signaldesk-local
+docker start signaldesk-local
+```
+
+Для переноса собранного образа на другую машину можно сохранить и загрузить его средствами Docker:
+
+```bash
+# На машине, где образ собран
+docker save --output signaldesk-local.tar signaldesk:local
+
+# На машине для проверки
+docker load --input signaldesk-local.tar
+```
+
+После загрузки образа создайте `.env` по инструкции выше и выполните команды запуска контейнера и создания локального аккаунта. Архив образа не содержит `.env`, API-ключи или базу рабочего пространства; Docker-том переносится отдельно при необходимости.
+
+### Альтернатива: Docker Compose
+
+Если установлен Docker Compose v2, те же компоненты можно собрать и запустить одной командой после подготовки `.env`:
 
 ```bash
 docker compose -f compose.local.yaml up --build -d
 ```
 
-Open **http://localhost:8310**. One API process and one durable analysis worker run together. SQLite data persists in the `signaldesk_data` volume. A fresh installation contains the supplied bank-research corpus, but no pre-generated company news or universal password.
-
-**Local account without SMTP.** Development email is disabled by default. Create a verified local reviewer from the container console and choose a password when prompted:
+Адрес остаётся **http://localhost:8310**. Локального пользователя создайте через сервис Compose:
 
 ```bash
 docker compose -f compose.local.yaml exec app python ops/bootstrap_local_user.py --email reviewer@example.test
 ```
 
-Sign in with that email/password, complete the company onboarding and run monitoring. This console command refuses production environments and never changes an existing account. Production registration always requires email confirmation. To test the actual email flow, configure SendPulse and set `EMAIL_DELIVERY=sendpulse` instead.
-
 ```bash
-# Inspect readiness and worker logs
-curl http://localhost:8310/api/health
+# Журнал и остановка с сохранением тома данных
 docker compose -f compose.local.yaml logs --tail=100 app
-# Stop while preserving the named data volume
 docker compose -f compose.local.yaml down
 ```
 
-### Check the case workflow locally
+Выберите один способ запуска: прямой `docker run` или Compose. Они используют один и тот же порт `8310`, но отдельные тома данных.
 
-After signing in, create a workspace and open **Company context**. Import `data/demo_clients.csv` and `data/demo_payments.csv`, select `U_88715`, review the company facts and confirm the profile. These files are a small anonymised subset supplied with the case, not a generated news feed. Upload limits are 10 MB and 2,000 rows per CSV.
+## Сквозной сценарий на локальной установке
 
-Add a public news RSS/HTML source, run monitoring, inspect the evidence in a published event, then generate day/week/month briefs and ask a source-grounded question. Automatic source discovery verifies publisher pages, advertised feeds and real sample publications against the confirmed industry and markets. Search failures and coverage gaps remain visible. No unsupported response or synthetic news is substituted for a failed model call.
+После входа создайте рабочее пространство и откройте **«Контекст компании» / Company context**. Импортируйте `data/demo_clients.csv` и `data/demo_payments.csv`, выберите `U_88715`, проверьте сведения и подтвердите профиль. Эти файлы содержат небольшой обезличенный фрагмент данных кейса. Лимит загрузки — 10 МБ и 2 000 строк на один CSV.
 
-## Features
+Добавьте публичный новостной источник RSS/HTML, запустите мониторинг и изучите основания опубликованного события. Затем сформируйте сводки за день, неделю и месяц и задайте вопрос по собранным материалам. Автоматический поиск источников проверяет сайты издателей, доступные ленты и реальные публикации с учётом подтверждённых отрасли и рынков компании.
 
-- Reviewed onboarding from a public company website or manual/case-data input. Unknown revenue, market share, geographic exposure and contract terms stay unknown. Approved profiles are versioned.
-- Automatic and manual RSS/Atom/HTML collection, source discovery, schedules, keyword exclusions, deduplication, diagnostics and research uploads.
-- Company- and role-aware ranking, source-backed interpretations, dated bank quotations, concrete next steps and visible uncertainty.
-- A custom multi-step agent with planning, tools, retained evidence context, independent review and one bounded retrieval/repair round. Unsupported drafts are withheld.
-- Executive dashboard, filtering, saved/hidden signals, feedback, important-event notifications and evidence-grounded follow-up questions.
-- Rolling 24-hour, 7-day and 30-day briefs. Empty periods produce an explicit coverage statement. Briefs support print/PDF and text copying.
-- Multiple workspaces, email-bound invitations, owner/admin/analyst/viewer permissions and separate business decision roles. Email confirmation gates product APIs.
-- Independent operations accounts at `/control`, user/run/usage statistics and audit records.
-- SendPulse opt-in alerts and briefs with a durable outbox and bounded retries.
-- English UI with Russian available for a Russian browser or the Russian product URL.
+Ошибки доступа к источникам и пробелы покрытия видны в интерфейсе. При ошибке модели или недостаточности подтверждений результат не подменяется синтетической новостью.
 
-## Architecture
+## Возможности продукта
 
-| Layer | Implementation |
+- Настройка компании по публичному сайту, вручную или по данным кейса. Пользователь проверяет рынки, приоритеты и факторы влияния; утверждённые профили версионируются.
+- Автоматический и ручной сбор RSS/Atom/HTML, поиск источников, расписания, исключения ключевых слов, устранение дублей, диагностика и загрузка аналитических материалов.
+- Отбор новостей под компанию и бизнес-роль, объяснение влияния, цитаты из датированных обзоров банка, следующие действия и явные неизвестные условия.
+- Собственный многошаговый агент: планирование, инструменты, общий контекст, независимая проверка и один ограниченный цикл поиска/исправления. Неподтверждённые выводы не публикуются.
+- Дашборд, фильтры, сохранённые и скрытые сигналы, обратная связь, важные уведомления и уточняющие вопросы с основаниями.
+- Сводки за последние 24 часа, 7 и 30 дней. При отсутствии подтверждённых событий сервис сообщает о покрытии. Доступны печать/PDF и копирование текста.
+- Несколько рабочих пространств, приглашения по email, права владельца/администратора/аналитика/наблюдателя и отдельные бизнес-роли. Доступ к продукту открывается после подтверждения почты.
+- Отдельная операционная админка `/control` со своими аккаунтами, статистикой пользователей, запусков и расхода моделей.
+- Уведомления и сводки через SendPulse по подписке, с очередью отправки и ограниченными повторными попытками.
+- Английский интерфейс и русский язык для российского адреса продукта или браузера с русским языком.
+
+## Архитектура
+
+| Слой | Реализация |
 |---|---|
-| Product and operations UI | Vue 3, TypeScript, Vite, Chart.js, Lucide |
-| API and access control | FastAPI, server-side workspace membership/RBAC, separate product/guest/admin sessions |
-| Persistence and scheduling | SQLAlchemy, SQLite WAL, durable jobs, one in-process worker, email outbox |
-| News tools | Public RSS/Atom/HTML fetch, checked DNS/network targets, deduplication and diagnostics |
-| Bank retrieval | Page-indexed OCR corpus of 9 supplied reports, bilingual BM25 retrieval, dates/URLs/checksums |
-| Interpretation and review | Approved Qwen generator and independent Gemma checker through the organiser gateway, structured contradiction checks, bounded correction |
-| Delivery | Event feed, dashboard, briefs, follow-up answers, SendPulse notifications |
+| Интерфейс продукта и админки | Vue 3, TypeScript, Vite, Chart.js, Lucide |
+| API и права доступа | FastAPI, серверная проверка участия в рабочем пространстве, RBAC, отдельные сессии продукта/гостя/администратора |
+| Хранение и задания | SQLAlchemy, SQLite WAL, сохраняемые фоновые задания, один обработчик, очередь писем |
+| Новостные инструменты | Публичные RSS/Atom/HTML, проверка DNS и сетевых адресов, устранение дублей и диагностика |
+| Поиск по аналитике банка | OCR-корпус из 9 материалов с разбивкой по страницам, двуязычный BM25, даты, URL и контрольные суммы |
+| Интерпретация и проверка | Разрешённые Qwen и Gemma через шлюз организатора, структурные проверки противоречий, ограниченное исправление |
+| Доставка результатов | Лента, дашборд, сводки, ответы на вопросы, уведомления SendPulse |
 
-The agent and its orchestration are implemented in this repository. No ready-made autonomous agent service, external embedding service or additional named model provider is required. A generic private OpenAI-compatible adapter is available for organisational development; use **Hackathon · approved models** for case evaluation.
+Агентная логика реализована в этом репозитории. Готовый автономный агент или внешний сервис эмбеддингов для работы решения не требуется. Для организационного использования предусмотрен универсальный адаптер к приватному OpenAI-совместимому API; при проверке кейса используйте режим **Hackathon · approved models**.
 
-The deployed prototype uses one app process and a persistent SQLite volume. Horizontal scaling would require PostgreSQL, transactional job leases, separate workers, a maintained retrieval index and off-host recovery. These are next-stage changes, not features claimed for this single-host prototype. See [implementation details](docs/IMPLEMENTATION.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
+Прототип работает в одном процессе приложения с постоянным томом SQLite. Для горизонтального масштабирования предусмотрен переход на PostgreSQL, отдельные обработчики заданий с арендой/блокировкой, обслуживаемый поисковый индекс и резервирование вне узла. Подробности — в [описании реализации](docs/IMPLEMENTATION.md) и [перечне сторонних компонентов](THIRD_PARTY_NOTICES.md).
 
-## Configuration
+## Переменные окружения
 
-| Variable | Purpose |
+| Переменная | Назначение |
 |---|---|
-| `APP_SECRET` | Random 32+ characters. Encrypts private model credentials; preserve across restarts. |
-| `ALFA_API_KEY` | Authorised server-side case key. Never exposed to the browser. |
-| `ALFA_BASE_URL` | Organiser gateway, default `https://changellenge.up.railway.app/v1`. |
-| `ALFA_FALLBACK_URL` | Gateway network fallback from the supplied API instructions. |
-| `ALFA_MODEL` | Default `qwen/qwen3.6-35b-a3b`. |
-| `ALFA_REVIEW_MODEL` | Independent checker, default `google/gemma-4-26b-a4b-it`. |
-| `MODEL_DAILY_TOKEN_LIMIT` | Application token guard, default 1,500,000. Upstream shared budget is separate. |
-| `DATABASE_URL` | SQLite connection. Docker local configuration uses `/data/signaldesk.sqlite`. |
-| `PUBLIC_URL`, `ALLOWED_ORIGINS` | Public links and exact allowed browser origins; local Compose overrides these. |
-| `APP_ENV`, `COOKIE_SECURE` | Production requires `APP_ENV=production`, secure cookies and a strong secret. |
-| `EMAIL_DELIVERY` | `disabled` by default or `sendpulse`. |
-| `SENDPULSE_ID`, `SENDPULSE_SECRET`, `EMAIL_FROM` | SendPulse OAuth and a verified sender for live email. |
-| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Optional one-time bootstrap of an independent administrator; no default admin password. |
-| `WORKER_ENABLED` | Enable the single durable worker. Disable for deterministic tests. |
+| `APP_SECRET` | Случайный секрет от 32 символов. Шифрует приватные ключи моделей; сохраняйте между перезапусками. |
+| `ALFA_API_KEY` | Ключ команды на шлюзе организатора, используется только сервером. Перед проверкой нужен активный ключ команды SubSchool. |
+| `ALFA_BASE_URL` | Основной API шлюза: `https://changellenge.up.railway.app/v1`. |
+| `ALFA_FALLBACK_URL` | Резервный адрес шлюза из инструкции организатора. |
+| `ALFA_MODEL` | Генератор, по умолчанию `qwen/qwen3.6-35b-a3b`. |
+| `ALFA_REVIEW_MODEL` | Независимая проверка, по умолчанию `google/gemma-4-26b-a4b-it`. |
+| `MODEL_DAILY_TOKEN_LIMIT` | Локальный суточный лимит токенов, по умолчанию 1 500 000. Общий бюджет шлюза учитывается отдельно. |
+| `DATABASE_URL` | Подключение к SQLite; в Docker используется `/data/signaldesk.sqlite`. |
+| `PUBLIC_URL`, `ALLOWED_ORIGINS` | Адрес продукта для ссылок и разрешённые адреса браузера. В локальном запуске заданы явно. |
+| `APP_ENV`, `COOKIE_SECURE` | Для production нужны `APP_ENV=production`, защищённые cookie и стойкий секрет. |
+| `EMAIL_DELIVERY` | `disabled` по умолчанию или `sendpulse`. |
+| `SENDPULSE_ID`, `SENDPULSE_SECRET`, `EMAIL_FROM` | OAuth SendPulse и подтверждённый отправитель для настоящей почтовой доставки. |
+| `ADMIN_EMAIL`, `ADMIN_PASSWORD` | Необязательное первичное создание отдельного администратора. Пароля администратора по умолчанию нет. |
+| `WORKER_ENABLED` | Включает единственный обработчик заданий; отключается для детерминированных тестов. |
 
-Budget/rate-limit errors preserve collected evidence, expose a failed run and allow retry. No measured expert-accuracy percentage is claimed. The quality process and its limitations are in [QUALITY.md](docs/QUALITY.md).
+Если ключ не активирован, бюджет исчерпан или шлюз вернул ограничение, собранные материалы сохраняются, а неудачный запуск отображается с возможностью повтора. Процесс контроля качества и ограничения описаны в [QUALITY.md](docs/QUALITY.md).
 
-## Development and tests
+## Разработка и тестирование
 
-Without Docker, install Python 3.14 and Node.js 24:
+Для разработки без Docker нужны Python 3.14 и Node.js 24. Версии библиотек зафиксированы в `backend/requirements.txt` и `frontend/package-lock.json`.
 
 ```bash
 python3.14 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
 npm ci --prefix frontend --registry=https://registry.npmjs.org
-# In one terminal:
+
+# В первом терминале
 PYTHONPATH=backend .venv/bin/uvicorn app.main:app --port 8010
-# In another terminal:
+
+# Во втором терминале
 npm run dev --prefix frontend
-# With SMTP disabled, bootstrap your local reviewer:
+
+# Создание локального аккаунта при отключённой почте
 .venv/bin/python ops/bootstrap_local_user.py --email reviewer@example.test
 ```
 
-Open `http://localhost:5173`. API schema: `/openapi.json`; interactive API: `/docs`; readiness: `/api/health`.
+Интерфейс: `http://localhost:5173`. Схема API: `/openapi.json`, интерактивная документация: `/docs`, готовность: `/api/health`.
 
 ```bash
 mkdir -p .local
 .venv/bin/python -m pytest backend/tests -q
 npm run build --prefix frontend
 npm exec --prefix frontend -- playwright install chromium
-# Run with local API/Vite servers, WORKER_ENABLED=false, APP_ENV=test and mail disabled:
+
+# Для E2E запустите локальные API/Vite с WORKER_ENABLED=false,
+# APP_ENV=test, EMAIL_DELIVERY=disabled и отдельной тестовой базой
 E2E_PYTHON=.venv/bin/python node scripts/e2e.mjs
-# Optional paid live-model/real-source checks on an isolated local database:
+
+# Необязательная проверка с платными вызовами моделей и реальными источниками
 RUN_LIVE_E2E=true E2E_PYTHON=.venv/bin/python node scripts/e2e.mjs
-# Read-only deployed smoke checks:
+
+# Проверки развёрнутого продукта без создания тестовых данных
 node scripts/smoke_deployed.mjs
 ```
 
-The deterministic browser suite creates synthetic fixtures locally. It cannot seed a public deployment, and the fixtures are excluded from the production image. CI reproduces server startup and test environment in [.github/workflows/ci.yml](.github/workflows/ci.yml). The original live replay passed 16 browser groups; current backend regressions total 61 tests. These are functional checks, not an expert-labelled content benchmark.
+Детерминированные E2E создают синтетические данные только локально. Эти фикстуры исключены из production-образа. Запуск тестовых серверов и переменные окружения воспроизводятся в [.github/workflows/ci.yml](.github/workflows/ci.yml). Зафиксированы 61 backend-тест, 12 групп детерминированных браузерных проверок и 16 групп отдельного прогона с реальным API. Это функциональные проверки, а не экспертная оценка точности контента.
 
-## Data and reproducibility
+## Данные и воспроизводимость
 
-- `data/bank/*.json`: page text, original source URL, date, OCR metadata and SHA-256 for nine bank reports supplied in the case. Original publication/reporting dates are preserved.
-- `data/demo_*.csv`: a small anonymised case subset for import. No real-company identity is inferred from the synthetic IDs.
-- Full organiser CSVs, original downloaded PDFs, private review bundles, API keys, databases and account passwords stay outside Git.
-- [Case analysis](docs/CASE_ANALYSIS.ru.md) records the aggregate analysis and selection rules used in the presentation. Reproduce it with `scripts/analyze_case_dataset.py` and your local original CSVs.
-- Source acquisition helpers: `scripts/fetch_case_data.py`, `scripts/ocr_case_research.py`. OCR regeneration additionally needs Tesseract, Pillow and Russian/English trained data.
-- [Case criteria](docs/CASE_CRITERIA.md), [webinar interpretations](docs/WEBINAR_INSIGHTS.ru.md), [review guide](docs/REVIEW.ru.md).
+- `data/bank/*.json` — текст страниц, исходные URL, даты, сведения об OCR и SHA-256 девяти обзоров банка из кейса. Сохранены даты публикации или отчётного периода.
+- `data/demo_*.csv` — небольшой обезличенный фрагмент данных кейса для импорта. Синтетические ID не сопоставляются с реальными названиями компаний.
+- Полные CSV организатора, исходные скачанные PDF, приватные проверочные данные, ключи, базы и пароли не входят в Git.
+- [Аналитические основания](docs/CASE_ANALYSIS.ru.md) содержат агрегаты и правила отбора из презентации. Расчёты воспроизводятся через `scripts/analyze_case_dataset.py` на локальных исходных CSV.
+- Вспомогательные скрипты получения и OCR: `scripts/fetch_case_data.py`, `scripts/ocr_case_research.py`. Для повторного OCR нужны Tesseract, Pillow и языковые данные русского/английского.
+- Дополнительные документы: [критерии кейса](docs/CASE_CRITERIA.md), [уточнения вебинара](docs/WEBINAR_INSIGHTS.ru.md), [сценарий проверки](docs/REVIEW.ru.md).
 
-GitHub contains the source and commit history. The public repository does not grant access to a product account. Submission reference: **`submission-2026-10-25`**. The demo and screenshots show actual collected materials and approved-model output; the video removes network waits and uses Russian synthetic narration.
+Исходный код и история коммитов публичны. Версия кода прототипа из презентации зафиксирована тегом **`submission-2026-10-25`**; актуальная инструкция находится в этой ветке. Демо показывает работающий интерфейс с реальными собранными материалами и результатами разрешённых моделей; ожидания сетевых ответов вырезаны, озвучка синтезирована.
